@@ -55,14 +55,14 @@ Solid arrows are implemented in the prototype. Dashed arrows are conceptual futu
 
 Accept, Change and Reject apply to the **investigation flag**, not the blood unit's clinical or operational disposition. A reason is mandatory; Change also requires a revised assessment. Neither API nor UI can release, clear, discard, declare compatible, or order transfusion of a unit.
 
-The UI offers `facility_staff` and `blood_service_supervisor` demo roles. The actor and role are self-reported and are not authenticated; this is a demonstration of the human decision step, not a secure two-role system. Production requires identity federation, server-side role/permission checks, protected storage, audit retention and authorized integration. Local SQLite triggers are append-only at the application database layer, not tamper-proof against an administrator with file access.
+The prototype has two environment-provisioned demo accounts. The API verifies usernames/passwords, issues an eight-hour signed HttpOnly cookie, assigns the role and actor name server-side, and requires the session for API data, review creation and audit-log reads. Review payloads cannot choose an actor or role. Both roles currently have the same review permissions because the organizer role matrix has not yet been confirmed. This is not a managed identity system: there is no MFA, account recovery/lifecycle or production-grade abuse protection. Production requires identity federation, blood-service-approved server-side permissions, protected storage, audit retention and authorized integration. Local SQLite triggers are append-only at the application database layer, not tamper-proof against an administrator with file access.
 
 ## Offline and low-connectivity behavior
 
 - The service worker caches the app shell and static assets; GET responses are cached in browser storage after a successful API response.
 - When a request fails, a cached response may be shown with a visible stale-data banner. A never-cached view remains unavailable and the UI reports the error.
 - Inventory can switch from sustained-event candidates to the persisted single-reading baseline list when the primary rule is uncertain or unavailable.
-- Review actions can be queued in browser local storage with an explicit pending-sync marker. The API deduplicates retries using the review ID.
+- Review actions can be queued in browser local storage with an explicit pending-sync marker. The API deduplicates retries using the review ID; a pending event is only sent when the same demo account is signed in, and pending entries from another account are not shown in the current account's audit view.
 - This is a single-browser fallback, not multi-device synchronization or an offline-first shared database. It cannot provide fresh data without connectivity and does not send SMS.
 - The responsive dashboard uses paginated API queries and is usable on small screens. Country/site branding and threshold values are settings, not source edits, but rule changes must be approved and the pipeline rerun.
 

@@ -47,6 +47,9 @@ Open `http://localhost:8000/docs` for the API explorer.
 Endpoints:
 
 - `GET /health`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
 - `GET /api/dashboard`
 - `GET /api/config`
 - `GET /api/data-quality`
@@ -63,7 +66,10 @@ Endpoints:
 
 The dashboard endpoint includes calculated monthly incident trends, per-facility counts and retrospective evaluation metrics. Incident details include the surrounding facility temperature history, outage correlations and investigation-candidate units. A missing date/time separator (`YYYY-MM-DDHH:MM:SS`) is normalized while reading timestamp columns; unparseable timestamps are still treated as missing.
 
-Review events are stored in `data/processed/review_audit.sqlite3`. Database triggers reject event updates and deletions. The selected role/name are self-reported demo values, not verified identity. Review decisions apply to the investigation flag only.
+Review events are stored in `data/processed/review_audit.sqlite3`. Database triggers reject event updates and deletions. Review creation and audit-log reads require a signed session cookie from a pre-provisioned demo account; the server assigns the actor and role and does not accept them from the review payload. This is prototype authentication, not production identity management. Review decisions apply to the investigation flag only.
+Both demo roles currently have the same review permissions. Role-specific authorization is intentionally not guessed while the organizers' role guidance is pending.
+
+Set `TRUSTLEDGER_AUTH_SECRET` to a random secret of at least 32 characters. Provision both demo accounts with `TRUSTLEDGER_DEMO_FACILITY_USERNAME`, `TRUSTLEDGER_DEMO_FACILITY_PASSWORD`, `TRUSTLEDGER_DEMO_FACILITY_NAME`, `TRUSTLEDGER_DEMO_SUPERVISOR_USERNAME`, `TRUSTLEDGER_DEMO_SUPERVISOR_PASSWORD`, and `TRUSTLEDGER_DEMO_SUPERVISOR_NAME`; passwords must be at least 12 characters. Never put real credentials in source control. For cross-site frontend/backend hosting, configure `TRUSTLEDGER_COOKIE_SECURE=true`, `TRUSTLEDGER_COOKIE_SAMESITE=none`, and an exact frontend origin in `TRUSTLEDGER_CORS_ORIGINS`.
 
 The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_MIN_C`, and `TRUSTLEDGER_TEMP_MAX_C` from its environment. Confirm thresholds with a blood-service expert and use the same settings when rerunning the pipeline.
 
@@ -78,4 +84,4 @@ Transport alerts are a separate evidence stream from facility temperature incide
 - Unit location reconstruction is conservative: a missing `received_at` makes location unknown after dispatch.
 - Potentially affected units are investigation candidates only. The system does not decide product safety, compatibility, release, discard, or transfusion. A qualified person retains authority.
 - `temp_excursion_exposed` is used only to calculate aggregate evaluation metrics; it is not used to detect incidents or construct exposure matches, and it is not returned by the API.
-- The review identity model is demonstrative only. Production requires authentication, authorization and a protected, shared audit service.
+- Demo authentication has no managed identity provider, MFA, account recovery/lifecycle or production-grade abuse controls. Production requires managed authentication, blood-service-approved authorization and a protected shared audit service.

@@ -12,7 +12,7 @@ The supplied synthetic data models Kenyan facilities. The named user roles are p
 1. The pipeline validates temperature records and groups continuous out-of-range readings.
 2. Four consecutive hourly readings above the configured upper limit are marked sustained. Confirmed unit-location intervals are overlapped with sustained events to create investigation candidates.
 3. Staff inspect temperature history, sensor-quality indicators, possible power-outage context and candidate units.
-4. A human records an investigation review with a reason. The append-only local audit log records the selected demo role, name, decision and time.
+4. A signed-in demo reviewer records an investigation review with a reason. The backend assigns the reviewer name and role from a pre-provisioned account and appends the event to the local audit log.
 
 No page releases, quarantines, discards or declares a unit safe or compatible. No real inventory or patient-care system is changed.
 
@@ -38,7 +38,7 @@ This retrospective evaluation uses the supplied synthetic labels; it is **not he
 
 - Accept / Change / Reject records a human review of an **investigation flag**; a reason is required and Change also requires the revised assessment.
 - The backend uses SQLite with database triggers that reject event updates and deletions. A client-generated review ID makes offline retries idempotent.
-- Two demo roles are selectable (facility staff and blood service supervisor), but names and roles are self-reported. This is **not authentication or access control** and must not be used as such.
+- The app has two pre-provisioned demo accounts. The backend verifies credentials, assigns each account a fixed role, and requires a signed HttpOnly session cookie for review and audit operations. This is prototype authentication only, not production identity management.
 - The browser caches successful API GET responses, caches visited app pages with a service worker, and queues review submissions locally when the API cannot be reached. Queued actions are visibly marked and sync when the API returns.
 - Inventory has a selectable single-reading baseline view for use when the sustained-event rule is unavailable or uncertain. The broader list is marked as a fallback and remains an investigation queue, not a disposition recommendation.
 - Cached readings can be stale; pending events remain on that browser until accepted by the API. If there is no cached copy, the app reports that data is unavailable. Do not treat a cached or baseline result as a disposition decision.
@@ -60,7 +60,13 @@ Requirements: Python 3.10+, Node.js 22+, npm.
    pip install -r backend/requirements.txt
    ```
 
-3. Generate processed data:
+3. Configure the demo login before starting the API:
+
+   - Copy `.env.example` to `.env` and set a random `TRUSTLEDGER_AUTH_SECRET` (at least 32 characters), both demo usernames, display names, and unique passwords of at least 12 characters.
+   - Generate a secret with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. Never commit `.env` or use the sample accounts/passwords for deployment.
+   - Load the values into the API shell (`set -a; . ./.env; set +a` in POSIX shells), then keep that shell open when starting the API. In hosted environments, set these values in the provider's secret manager instead.
+
+4. Generate processed data:
 
    ```bash
    cd backend
@@ -68,28 +74,31 @@ Requirements: Python 3.10+, Node.js 22+, npm.
    cd ..
    ```
 
-4. Start the API in one terminal:
+5. Start the API in one terminal:
 
    ```bash
    source .venv/bin/activate
    cd backend
+   set -a
+   . ../.env
+   set +a
    uvicorn app.main:app --reload --port 8000
    ```
 
-5. In another terminal, copy `frontend/.env.example` to `frontend/.env.local`, install and start:
+6. In another terminal, copy `frontend/.env.example` to `frontend/.env.local`, install and start:
 
    ```bash
    npm --prefix frontend install
    npm --prefix frontend run dev
    ```
 
-6. Open [http://localhost:3000](http://localhost:3000). API documentation is at [http://localhost:8000/docs](http://localhost:8000/docs).
+7. Open [http://localhost:3000](http://localhost:3000) and sign in with one of the configured accounts. API documentation is at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 Run backend checks from the repository root with `.venv/bin/pytest -q`. Run frontend checks with `npm --prefix frontend run lint`, `npm --prefix frontend run typecheck` and `npm --prefix frontend run build`.
 
 ## Configuration for another site
 
-The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_MIN_C`, `TRUSTLEDGER_TEMP_MAX_C` and `TRUSTLEDGER_CORS_ORIGINS` from its environment. The frontend reads `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_COUNTRY_LABEL` and `NEXT_PUBLIC_API_BASE_URL`; examples are in `.env.example` and `frontend/.env.example`. `TRUSTLEDGER_AUDIT_DB_PATH` optionally selects the local audit database path. Set policy values only after the relevant blood-service authority confirms them, then rerun the pipeline with the same settings. The current workflow supports one RBC/WB temperature range and English labels; component-specific rules, translation, and country-specific legal workflows need further implementation and expert review.
+The API reads site, threshold, CORS, demo-account, session-secret and cookie settings from its environment. For deployment across different frontend/backend sites, set `TRUSTLEDGER_COOKIE_SECURE=true` and `TRUSTLEDGER_COOKIE_SAMESITE=none`; keep the CORS allowlist restricted to the exact frontend origin. The frontend reads `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_COUNTRY_LABEL` and `NEXT_PUBLIC_API_BASE_URL`; examples are in `.env.example` and `frontend/.env.example`. `TRUSTLEDGER_AUDIT_DB_PATH` optionally selects the local audit database path. Set policy values only after the relevant blood-service authority confirms them, then rerun the pipeline with the same settings. The current workflow supports one RBC/WB temperature range and English labels; component-specific rules, translation, and country-specific legal workflows need further implementation and expert review.
 
 ## Safety and limitations
 
@@ -100,7 +109,7 @@ The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_
 - Transport cool-box maximum temperatures above the configured RBC/WB upper limit appear in a separate transport-alert view. A single maximum is not a continuous trace and does not prove exposure duration or product safety.
 - Facility temperature readings have no fridge or sensor identifier, so incidents are facility-level and cannot be attributed to a specific appliance.
 - The threshold and four-reading rule are prototype settings, not universal clinical policy.
-- Local review storage, self-reported roles, browser cache and outbox are single-device demo mechanisms. Production requires verified identity, authorization, a protected shared audit store, retention policy, encrypted transport/storage, and integration with authorized inventory/quarantine systems.
+- The demo login uses environment-provisioned credentials and signed cookies; it has no managed identity, MFA, account recovery/lifecycle, or production-grade abuse controls. Local review storage, browser cache and outbox are single-device demo mechanisms. Production requires a managed identity provider, blood-service-approved authorization, a protected shared audit store, retention policy, encrypted transport/storage, and integration with authorized inventory/quarantine systems.
 - Weak-network fallback uses last-known cached data and queues review events; it does not support SMS and cannot synchronize until connectivity returns.
 
 ## Demo readiness
