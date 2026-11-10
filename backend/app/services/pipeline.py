@@ -330,6 +330,39 @@ def correlate_power_outages(incidents: pd.DataFrame, outages: pd.DataFrame) -> p
     return pd.DataFrame(rows)
 
 
+def build_transport_temperature_alerts(
+    transfers: pd.DataFrame, units: pd.DataFrame
+) -> pd.DataFrame:
+    """Return RBC/WB transfers whose recorded cool-box maximum exceeds the configured limit."""
+    columns = [
+        "transfer_id", "unit_id", "component", "blood_group", "unit_status",
+        "from_facility_id", "to_facility_id", "transfer_type", "dispatched_at",
+        "received_at", "transport_mode", "coolbox_max_temp_c",
+    ]
+    required_transfers = {
+        "transfer_id", "unit_id", "from_facility_id", "to_facility_id",
+        "transfer_type", "dispatched_at", "received_at", "transport_mode",
+        "coolbox_max_temp_c",
+    }
+    required_units = {"unit_id", "component", "blood_group", "status"}
+    if required_transfers - set(transfers.columns) or required_units - set(units.columns):
+        raise ValueError("Transfers/units data is missing columns needed for transport temperature review")
+    if transfers.empty or units.empty:
+        return pd.DataFrame(columns=columns)
+
+    unit_meta = units[["unit_id", "component", "blood_group", "status"]].drop_duplicates("unit_id")
+    unit_meta = unit_meta.rename(columns={"status": "unit_status"})
+    records = transfers.merge(unit_meta, on="unit_id", how="inner")
+    records["coolbox_max_temp_c"] = pd.to_numeric(records["coolbox_max_temp_c"], errors="coerce")
+    alerts = records[
+        records["component"].isin(["RBC", "WB"])
+        & records["coolbox_max_temp_c"].gt(SAFE_MAX_C)
+    ]
+    return alerts[columns].sort_values(
+        ["dispatched_at", "transfer_id"], na_position="last"
+    ).reset_index(drop=True)
+
+
 def evaluate_candidate_matching(
     incidents: pd.DataFrame,
     intervals: pd.DataFrame,
@@ -407,6 +440,7 @@ def run_pipeline(data_dir: str | Path, output_dir: str | Path) -> dict[str, Any]
         incidents, intervals, inputs["units"], baseline_rows=baseline_affected
     )
     outage_matches = correlate_power_outages(incidents, inputs["outages"])
+    transport_alerts = build_transport_temperature_alerts(inputs["transfers"], inputs["units"])
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -418,6 +452,7 @@ def run_pipeline(data_dir: str | Path, output_dir: str | Path) -> dict[str, Any]
     intervals.to_csv(out_dir / "unit_location_intervals.csv", index=False)
     quality["facility_gaps"].to_csv(out_dir / "temperature_gaps_by_facility.csv", index=False)
     outage_matches.to_csv(out_dir / "incident_power_correlations.csv", index=False)
+    transport_alerts.to_csv(out_dir / "transport_temperature_alerts.csv", index=False)
 
     summary = {
         "site_name": os.environ.get("TRUSTLEDGER_SITE_NAME", "TrustLedger"),
@@ -432,6 +467,7 @@ def run_pipeline(data_dir: str | Path, output_dir: str | Path) -> dict[str, Any]
         "potentially_affected_unit_matches": int(len(affected)),
         "unique_potentially_affected_units": int(affected["unit_id"].nunique()) if not affected.empty else 0,
         "incidents_with_power_outage_overlap": int(outage_matches["incident_id"].nunique()) if not outage_matches.empty else 0,
+        "transport_temperature_alert_count": int(len(transport_alerts)),
         "location_intervals_built": int(len(intervals)),
         "safety_note": "Matches are investigation candidates only. They do not establish product safety or authorize release, transfusion, discard, or quarantine removal.",
     }

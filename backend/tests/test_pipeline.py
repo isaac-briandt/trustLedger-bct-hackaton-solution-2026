@@ -2,6 +2,7 @@ import pandas as pd
 from app.services.pipeline import (
     build_incidents,
     build_location_intervals,
+    build_transport_temperature_alerts,
     evaluate_candidate_matching,
     parse_timestamp_series,
     validate_temperature,
@@ -82,3 +83,40 @@ def test_sustained_event_evaluation_compares_against_single_reading_baseline():
     assert evaluation["baseline"]["precision"] == 0.5
     assert evaluation["baseline"]["recall"] == 0.5
     assert "temp_excursion_exposed" not in str(evaluation)
+
+
+def test_transport_alerts_flag_only_rbc_wb_maxima_above_configured_limit():
+    transfers = pd.DataFrame([
+        {
+            "transfer_id": "T1", "unit_id": "U1", "from_facility_id": "F1",
+            "to_facility_id": "F2", "transfer_type": "routine",
+            "dispatched_at": pd.Timestamp("2026-01-01 10:00"),
+            "received_at": pd.Timestamp("2026-01-01 12:00"), "transport_mode": "vehicle",
+            "coolbox_max_temp_c": 7.2,
+        },
+        {
+            "transfer_id": "T2", "unit_id": "U2", "from_facility_id": "F1",
+            "to_facility_id": "F2", "transfer_type": "routine",
+            "dispatched_at": pd.Timestamp("2026-01-01 10:00"),
+            "received_at": pd.Timestamp("2026-01-01 12:00"), "transport_mode": "vehicle",
+            "coolbox_max_temp_c": 6.0,
+        },
+        {
+            "transfer_id": "T3", "unit_id": "U3", "from_facility_id": "F1",
+            "to_facility_id": "F2", "transfer_type": "routine",
+            "dispatched_at": pd.Timestamp("2026-01-01 10:00"),
+            "received_at": pd.Timestamp("2026-01-01 12:00"), "transport_mode": "vehicle",
+            "coolbox_max_temp_c": 8.0,
+        },
+    ])
+    units = pd.DataFrame([
+        {"unit_id": "U1", "component": "RBC", "blood_group": "O+", "status": "in_stock"},
+        {"unit_id": "U2", "component": "WB", "blood_group": "A+", "status": "transfused"},
+        {"unit_id": "U3", "component": "PLT", "blood_group": "B+", "status": "in_stock"},
+    ])
+
+    alerts = build_transport_temperature_alerts(transfers, units)
+
+    assert alerts["transfer_id"].tolist() == ["T1"]
+    assert alerts.iloc[0]["coolbox_max_temp_c"] == 7.2
+    assert "temp_excursion_exposed" not in alerts.columns

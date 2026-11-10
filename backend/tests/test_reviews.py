@@ -116,3 +116,31 @@ def test_baseline_candidate_view_returns_candidates_without_evaluation_labels(
     assert response["strategy"] == "baseline"
     assert "temp_excursion_exposed_label" not in response["items"][0]
     assert "Fallback baseline" in response["notice"]
+
+
+def test_transport_alerts_endpoint_searches_and_paginates_without_labels(review_environment):
+    pd.DataFrame([
+        {
+            "transfer_id": f"TR-{index}",
+            "unit_id": f"UNIT-{index}",
+            "component": "RBC",
+            "blood_group": "O+",
+            "unit_status": "in_stock",
+            "from_facility_id": "FAC-1",
+            "to_facility_id": "FAC-2",
+            "transfer_type": "routine",
+            "dispatched_at": "2026-01-01 10:00:00",
+            "received_at": "2026-01-01 11:00:00",
+            "transport_mode": "vehicle",
+            "coolbox_max_temp_c": 7.1,
+        }
+        for index in range(2)
+    ]).to_csv(main.OUTPUT_DIR / "transport_temperature_alerts.csv", index=False)
+
+    response = main.transport_alerts(limit=1, offset=1, search="FAC-1")
+
+    assert response["total"] == 2
+    assert response["items"][0]["unit_id"] == "UNIT-1"
+    assert response["items"][0]["coolbox_max_temp_c"] == 7.1
+    assert "temp_excursion_exposed" not in response["items"][0]
+    assert "not proof" in response["notice"]

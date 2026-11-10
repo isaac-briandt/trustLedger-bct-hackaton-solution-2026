@@ -216,6 +216,45 @@ def incidents(
     }
 
 
+@app.get("/api/transport-alerts")
+def transport_alerts(
+    limit: int = 100,
+    offset: int = 0,
+    search: str | None = None,
+):
+    import pandas as pd
+    path = OUTPUT_DIR / "transport_temperature_alerts.csv"
+    if not path.exists():
+        raise HTTPException(status_code=503, detail="Run the data pipeline first.")
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    df = pd.read_csv(path)
+    if search:
+        searchable = [
+            column for column in [
+                "transfer_id", "unit_id", "component", "blood_group",
+                "from_facility_id", "to_facility_id", "transfer_type", "transport_mode",
+            ] if column in df
+        ]
+        matched = df[searchable].fillna("").astype(str).apply(
+            lambda column: column.str.contains(search, case=False, regex=False)
+        ).any(axis=1)
+        df = df[matched]
+    rows = df.iloc[offset:offset + limit]
+    return {
+        "items": rows.astype(object).where(pd.notna(rows), None).to_dict("records"),
+        "total": int(len(df)),
+        "limit": limit,
+        "offset": offset,
+        "notice": (
+            "Transport evidence only: cool-box maximum readings above the configured "
+            "RBC/WB threshold are investigation flags, not proof of unit exposure or "
+            "a product disposition decision."
+        ),
+        "temperature_policy": {"minimum_c": SAFE_MIN_C, "maximum_c": SAFE_MAX_C},
+    }
+
+
 @app.get("/api/data-quality")
 def data_quality():
     return read_json("pipeline_summary.json")["temperature_quality"]
