@@ -1,20 +1,46 @@
-# TrustLedger frontend — next milestone
+# TrustLedger frontend
 
-The frontend will be a Next.js App Router application using TypeScript and Tailwind CSS.
+Next.js App Router dashboard built with TypeScript, Tailwind CSS, shadcn/ui, Recharts, Lucide React and TanStack Query.
 
-## Initial pages
+## Run locally
 
-- `/dashboard` — pipeline summary and facility-level overview
-- `/incidents` — warnings and sustained incidents
-- `/incidents/[id]` — temperature evidence, outage context and potentially affected RBC/WB units
-- `/data-quality` — invalid readings, missing hourly observations and data-quality trends
+From the repository root, start the FastAPI service in one terminal:
 
-## API
+```bash
+cd backend
+uvicorn app.main:app --reload --port 8000
+```
 
-The local FastAPI service runs at `http://localhost:8000`.
+In another terminal, start the frontend:
 
-Set `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` in `.env.local`.
+```bash
+npm --prefix frontend install
+npm --prefix frontend run dev
+```
 
-Available endpoints are documented in the root README and exposed at `http://localhost:8000/docs`.
+Open `http://localhost:3000`. The API base defaults to `http://localhost:8000`; override it with `NEXT_PUBLIC_API_BASE_URL` when needed. The root `.env.example` contains the local default.
 
-The interface must clearly label all affected units as **investigation candidates** and must not provide a blood release or transfusion action. The next workflow milestone will add an authorized human decision interface backed by role checks and an audit trail.
+Useful checks:
+
+```bash
+npm --prefix frontend run lint
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+```
+
+## Pages
+
+- `/dashboard` — live pipeline statistics, monthly incident counts, facility monitoring and latest incidents.
+- `/incidents` — searchable, paginated incident list.
+- `/incidents/[id]` — temperature history, outage correlations and investigation-candidate units.
+- `/inventory` — searchable, paginated unit-to-incident matches.
+- `/data-quality` — sensor glitches, missing observations, duplicates and range checks.
+- `/review` and `/audit-log` — clearly marked placeholders until the API supports authenticated decisions and audit persistence.
+
+Dashboard figures are fetched from the API; no dataset statistics are hardcoded. API errors are shown in the interface instead of replacing failed responses with sample data.
+
+## Data and safety
+
+Timestamp parsing repairs the missing date/time separator form `YYYY-MM-DDHH:MM:SS` at ingestion and before display. Invalid timestamps remain visibly unavailable instead of being used on charts.
+
+Incident and inventory records are read-only. Potentially affected units are **investigation candidates only**; the application does not decide safety or authorize release, discard, quarantine removal, compatibility or transfusion. Review and audit actions must not be added until authentication, role checks and an append-only audit API are implemented.
