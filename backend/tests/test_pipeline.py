@@ -1,5 +1,16 @@
 import pandas as pd
-from app.services.pipeline import validate_temperature, build_incidents, build_location_intervals
+from app.services.pipeline import (
+    build_incidents,
+    build_location_intervals,
+    parse_timestamp_series,
+    validate_temperature,
+)
+
+
+def test_timestamp_parser_recovers_missing_date_time_separator():
+    parsed = parse_timestamp_series(pd.Series(["2025-11-0211:00:00", "2025-11-03 12:00:00"]))
+    assert parsed.iloc[0] == pd.Timestamp("2025-11-02 11:00:00")
+    assert parsed.iloc[1] == pd.Timestamp("2025-11-03 12:00:00")
 
 
 def test_sentinel_values_are_not_counted_as_excursions():

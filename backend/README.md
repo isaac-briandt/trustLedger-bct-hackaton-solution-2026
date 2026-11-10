@@ -44,8 +44,14 @@ Endpoints:
 
 - `GET /health`
 - `GET /api/dashboard`
-- `GET /api/incidents`
+- `GET /api/data-quality`
+- `GET /api/incidents?limit=50&offset=0&search=...`
 - `GET /api/incidents/{incident_id}`
+- `GET /api/units/affected?limit=50&offset=0&search=...`
+- `GET /api/units/affected/{incident_id}`
+- `GET /api/power-correlations`
+
+The dashboard endpoint includes calculated monthly incident trends and per-facility counts. Incident details include the surrounding facility temperature history, outage correlations and investigation-candidate units. A missing date/time separator (`YYYY-MM-DDHH:MM:SS`) is normalized while reading timestamp columns; unparseable timestamps are still treated as missing.
 
 ## Safety and interpretation
 

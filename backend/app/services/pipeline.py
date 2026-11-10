@@ -27,8 +27,17 @@ def _read_csv(data_dir: Path, filename: str, date_columns: list[str] | None = No
     df = pd.read_csv(path)
     for col in date_columns or []:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
+            df[col] = parse_timestamp_series(df[col])
     return df
+
+
+def parse_timestamp_series(values: pd.Series) -> pd.Series:
+    text = values.astype("string").str.strip().str.replace(
+        r"^(\d{4}-\d{2}-\d{2})\s*(\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$",
+        r"\1 \2",
+        regex=True,
+    )
+    return pd.to_datetime(text, errors="coerce")
 
 
 def load_inputs(data_dir: str | Path) -> dict[str, pd.DataFrame]:
