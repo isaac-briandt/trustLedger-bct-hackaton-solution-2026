@@ -13,7 +13,7 @@ flowchart TD
     F --> I[Processed CSV and JSON outputs]
     H --> I
     I --> J[FastAPI read API]
-    J --> K[Next.js dashboard - next milestone]
+    J --> K[Next.js read-only dashboard - implemented]
     K --> L[Authorized human review - next milestone]
     L --> M[Decision and audit trail - next milestone]
 ```

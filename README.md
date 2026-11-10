@@ -3,9 +3,9 @@
 **AI-assisted cold-chain incident detection, data quality validation and blood-unit traceability.**  
 Terumo BCT Africa Hackathon 2026 · Challenge area: Data Quality & Cold Chain
 
-## Milestone 1 status
+## Milestones 1–2 status
 
-The initial Python data foundation and read-only API are implemented and tested.
+The Python data foundation and read-only API are implemented and tested. The first API-backed dashboard is now available.
 
 - [x] Initial monorepo structure
 - [x] CSV ingestion for facilities, temperature logs, units, donations, transfers and power outages
@@ -16,7 +16,7 @@ The initial Python data foundation and read-only API are implemented and tested.
 - [x] Power-outage correlation
 - [x] Initial FastAPI read endpoints
 - [x] Pipeline unit tests and API smoke tests
-- [ ] Next.js dashboard
+- [x] Next.js dashboard (read-only overview, incidents, traceability and data quality)
 - [ ] Human decision workflow and audit trail
 - [ ] AI model and baseline evaluation
 - [ ] Offline mode / sync
@@ -29,6 +29,7 @@ trustledger/
 ├── data/
 │   ├── raw/              # Organizer CSV files (ignored by Git)
 │   └── processed/        # Generated outputs (ignored by Git)
+├── frontend/             # Next.js dashboard
 └── docs/                 # Architecture and dataset audit
 ```
 
@@ -67,6 +68,15 @@ uvicorn app.main:app --reload --port 8000
 
 Open `http://localhost:8000/docs` for interactive API documentation.
 
+7. Start the dashboard in another terminal:
+
+```bash
+npm --prefix frontend install
+npm --prefix frontend run dev
+```
+
+Open `http://localhost:3000`. The frontend reads the API at `http://localhost:8000` by default; see `.env.example` to configure another base URL.
+
 ## API endpoints
 
 - `GET /health`
@@ -75,6 +85,7 @@ Open `http://localhost:8000/docs` for interactive API documentation.
 - `GET /api/incidents`
 - `GET /api/incidents/{incident_id}`
 - `GET /api/units/affected/{incident_id}`
+- `GET /api/units/affected` (searchable and paginated)
 - `GET /api/power-correlations`
 
 ## Current pipeline findings
@@ -97,4 +108,4 @@ ChatGPT was used to assist with dataset inspection, architecture planning, code 
 
 ## Next milestone
 
-Implement the Next.js dashboard against the API contract, then add the human Accept / Change / Reject decision flow with role checks and an append-only audit trail. AI anomaly detection and its baseline comparison follow after the deterministic pipeline is stable.
+Add the authenticated human Accept / Change / Reject decision flow with role checks and an append-only audit trail. The dashboard currently leaves review and audit pages unavailable because the API is read-only. AI anomaly detection and its baseline comparison follow after the deterministic pipeline is stable.
