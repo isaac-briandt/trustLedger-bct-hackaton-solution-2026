@@ -18,9 +18,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.services.pipeline import SAFE_MAX_C, SAFE_MIN_C, parse_timestamp_series
 
 APP_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = APP_DIR.parents[1]
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
-RAW_DIR = PROJECT_ROOT / "data" / "raw"
+BACKEND_ROOT = APP_DIR.parent
+OUTPUT_DIR = BACKEND_ROOT / "data" / "processed"
+RAW_DIR = BACKEND_ROOT / "data" / "raw"
 AUDIT_DB_PATH = Path(
     os.environ.get(
         "TRUSTLEDGER_AUDIT_DB_PATH",
