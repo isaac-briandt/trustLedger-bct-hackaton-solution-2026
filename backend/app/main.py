@@ -1,24 +1,130 @@
 from pathlib import Path
+from datetime import datetime, timezone
 import json
+import os
+import sqlite3
+from contextlib import closing
+from typing import Any, Literal
+from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
+import pandas as pd
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.services.pipeline import parse_timestamp_series
+from app.services.pipeline import SAFE_MAX_C, SAFE_MIN_C, parse_timestamp_series
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parents[1]
 OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
+AUDIT_DB_PATH = Path(
+    os.environ.get(
+        "TRUSTLEDGER_AUDIT_DB_PATH",
+        str(OUTPUT_DIR / "review_audit.sqlite3"),
+    )
+)
 
 app = FastAPI(title="TrustLedger API", version="0.2.0", description="Cold-chain incident investigation prototype")
+cors_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "TRUSTLEDGER_CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class ReviewSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_id: UUID
+    incident_id: str = Field(min_length=1, max_length=80)
+    actor_name: str = Field(min_length=2, max_length=80)
+    role: Literal["facility_staff", "blood_service_supervisor"]
+    decision: Literal["accept", "change", "reject"]
+    reason: str = Field(min_length=5, max_length=1000)
+    changed_assessment: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("actor_name", "incident_id", "reason", "changed_assessment", mode="before")
+    @classmethod
+    def strip_text(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def require_changed_assessment(self):
+        if self.decision == "change" and not self.changed_assessment:
+            raise ValueError("A changed assessment is required for a Change decision.")
+        return self
+
+
+def _connect_audit_db() -> sqlite3.Connection:
+    AUDIT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(AUDIT_DB_PATH, timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS review_events (
+            review_id TEXT PRIMARY KEY,
+            incident_id TEXT NOT NULL,
+            actor_name TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('facility_staff', 'blood_service_supervisor')),
+            decision TEXT NOT NULL CHECK (decision IN ('accept', 'change', 'reject')),
+            reason TEXT NOT NULL,
+            changed_assessment TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE TRIGGER IF NOT EXISTS review_events_no_update
+        BEFORE UPDATE ON review_events
+        BEGIN
+            SELECT RAISE(ABORT, 'review events are append-only');
+        END;
+        CREATE TRIGGER IF NOT EXISTS review_events_no_delete
+        BEFORE DELETE ON review_events
+        BEGIN
+            SELECT RAISE(ABORT, 'review events are append-only');
+        END;
+        """
+    )
+    return connection
+
+
+def _review_dict(row: sqlite3.Row) -> dict:
+    return {key: row[key] for key in row.keys()}
+
+
+def _record_review(submission: ReviewSubmission) -> tuple[dict, bool]:
+    record = submission.model_dump(mode="json")
+    record["created_at"] = datetime.now(timezone.utc).isoformat()
+    with closing(_connect_audit_db()) as connection, connection:
+        existing = connection.execute(
+            "SELECT * FROM review_events WHERE review_id = ?",
+            (record["review_id"],),
+        ).fetchone()
+        if existing:
+            existing_record = _review_dict(existing)
+            comparable = {key: existing_record[key] for key in record if key != "created_at"}
+            if comparable != {key: value for key, value in record.items() if key != "created_at"}:
+                raise HTTPException(status_code=409, detail="This review ID was already used for a different decision.")
+            return existing_record, False
+        connection.execute(
+            """
+            INSERT INTO review_events
+                (review_id, incident_id, actor_name, role, decision, reason, changed_assessment, created_at)
+            VALUES
+                (:review_id, :incident_id, :actor_name, :role, :decision, :reason, :changed_assessment, :created_at)
+            """,
+            record,
+        )
+    return record, True
 
 
 def read_json(name: str):
@@ -31,6 +137,16 @@ def read_json(name: str):
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "trustledger-api"}
+
+
+@app.get("/api/config")
+def site_config():
+    return {
+        "site_name": os.environ.get("TRUSTLEDGER_SITE_NAME", "TrustLedger"),
+        "country": os.environ.get("TRUSTLEDGER_COUNTRY", "Kenya"),
+        "temperature_policy": {"minimum_c": SAFE_MIN_C, "maximum_c": SAFE_MAX_C},
+        "identity_mode": "demo_self_reported",
+    }
 
 
 @app.get("/api/dashboard")
@@ -105,6 +221,43 @@ def data_quality():
     return read_json("pipeline_summary.json")["temperature_quality"]
 
 
+@app.post("/api/reviews")
+def create_review(submission: ReviewSubmission):
+    incidents_path = OUTPUT_DIR / "incidents.csv"
+    if not incidents_path.exists():
+        raise HTTPException(status_code=503, detail="Run the data pipeline first.")
+    incidents_df = pd.read_csv(incidents_path, usecols=["incident_id"])
+    if submission.incident_id not in set(incidents_df["incident_id"].astype(str)):
+        raise HTTPException(status_code=404, detail="Incident not found")
+    record, created = _record_review(submission)
+    return {
+        "status": "recorded" if created else "already_recorded",
+        "review": record,
+        "notice": "Demo role and actor name are self-reported, not authenticated identity.",
+    }
+
+
+@app.get("/api/reviews")
+@app.get("/api/audit-log")
+def review_audit_log(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    with closing(_connect_audit_db()) as connection:
+        total = connection.execute("SELECT COUNT(*) FROM review_events").fetchone()[0]
+        rows = connection.execute(
+            "SELECT * FROM review_events ORDER BY created_at DESC, review_id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    return {
+        "items": [_review_dict(row) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "notice": "Demo role and actor name are self-reported, not authenticated identity.",
+    }
+
+
 @app.get("/api/power-correlations")
 def power_correlations(limit: int = 100):
     import pandas as pd
@@ -133,9 +286,11 @@ def affected_units_list(
     limit: int = 100,
     offset: int = 0,
     search: str | None = None,
+    strategy: Literal["sustained", "baseline"] = "sustained",
 ):
     import pandas as pd
-    path = OUTPUT_DIR / "potentially_affected_units.csv"
+    filename = "baseline_candidate_units.csv" if strategy == "baseline" else "potentially_affected_units.csv"
+    path = OUTPUT_DIR / filename
     if not path.exists():
         raise HTTPException(status_code=503, detail="Run the data pipeline first.")
     limit = max(1, min(limit, 500))
@@ -154,7 +309,12 @@ def affected_units_list(
         "total": total,
         "limit": limit,
         "offset": offset,
-        "notice": "Investigation candidates only. A qualified person must assess and decide disposition.",
+        "strategy": strategy,
+        "notice": (
+            "Fallback baseline: any out-of-range reading can create a candidate. Review the broader list; do not infer product disposition."
+            if strategy == "baseline"
+            else "Investigation candidates only. A qualified person must assess and decide disposition."
+        ),
     }
 
 
@@ -205,4 +365,5 @@ def incident_detail(incident_id: str):
         "power_correlations": correlations.astype(object).where(pd.notna(correlations), None).to_dict("records"),
         "decision_required": True,
         "notice": "Investigation candidates only. A qualified person must assess and decide disposition.",
+        "temperature_policy": {"minimum_c": SAFE_MIN_C, "maximum_c": SAFE_MAX_C},
     }
