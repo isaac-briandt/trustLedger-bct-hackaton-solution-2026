@@ -41,9 +41,13 @@ export default function ReviewPage() {
     }) => submitReview(submission, actor),
     onSuccess: async (result) => {
       setResultMessage(result.notice);
-      setReason("");
-      setChangedAssessment("");
-      await queryClient.invalidateQueries({ queryKey: ["audit-log"] });
+      if (result.status === "recorded" || result.status === "already_recorded") {
+        setIncidentId("");
+        setDecision("accept");
+        setReason("");
+        setChangedAssessment("");
+        await queryClient.invalidateQueries({ queryKey: ["audit-log"] });
+      }
     },
   });
 
