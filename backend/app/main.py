@@ -1,14 +1,17 @@
 from pathlib import Path
+import base64
 from datetime import datetime, timezone
+import hmac
 import json
 import os
 import sqlite3
+import time
 from contextlib import closing
 from typing import Any, Literal
 from uuid import UUID
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -48,13 +51,11 @@ class ReviewSubmission(BaseModel):
 
     review_id: UUID
     incident_id: str = Field(min_length=1, max_length=80)
-    actor_name: str = Field(min_length=2, max_length=80)
-    role: Literal["facility_staff", "blood_service_supervisor"]
     decision: Literal["accept", "change", "reject"]
     reason: str = Field(min_length=5, max_length=1000)
     changed_assessment: str | None = Field(default=None, max_length=1000)
 
-    @field_validator("actor_name", "incident_id", "reason", "changed_assessment", mode="before")
+    @field_validator("incident_id", "reason", "changed_assessment", mode="before")
     @classmethod
     def strip_text(cls, value: Any) -> Any:
         return value.strip() if isinstance(value, str) else value
@@ -64,6 +65,97 @@ class ReviewSubmission(BaseModel):
         if self.decision == "change" and not self.changed_assessment:
             raise ValueError("A changed assessment is required for a Change decision.")
         return self
+
+
+class DemoLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class DemoUser(BaseModel):
+    username: str
+    actor_name: str
+    role: Literal["facility_staff", "blood_service_supervisor"]
+
+
+def _demo_auth_settings() -> tuple[str, dict[str, dict[str, str]]]:
+    secret = os.environ.get("TRUSTLEDGER_AUTH_SECRET", "")
+    cookie_samesite = os.environ.get("TRUSTLEDGER_COOKIE_SAMESITE", "lax").lower()
+    cookie_secure = os.environ.get("TRUSTLEDGER_COOKIE_SECURE", "false").lower() == "true"
+    accounts = {
+        "facility_staff": {
+            "username": os.environ.get("TRUSTLEDGER_DEMO_FACILITY_USERNAME", ""),
+            "password": os.environ.get("TRUSTLEDGER_DEMO_FACILITY_PASSWORD", ""),
+            "actor_name": os.environ.get("TRUSTLEDGER_DEMO_FACILITY_NAME", ""),
+        },
+        "blood_service_supervisor": {
+            "username": os.environ.get("TRUSTLEDGER_DEMO_SUPERVISOR_USERNAME", ""),
+            "password": os.environ.get("TRUSTLEDGER_DEMO_SUPERVISOR_PASSWORD", ""),
+            "actor_name": os.environ.get("TRUSTLEDGER_DEMO_SUPERVISOR_NAME", ""),
+        },
+    }
+    if (
+        len(secret) < 32
+        or any(not all(account.values()) or len(account["password"]) < 12 for account in accounts.values())
+        or cookie_samesite not in {"lax", "strict", "none"}
+        or (cookie_samesite == "none" and not cookie_secure)
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Demo authentication is not configured. Set a 32-character auth secret, "
+                "and both pre-provisioned demo accounts with passwords of at least 12 characters, "
+                "and valid secure cookie settings."
+            ),
+        )
+    if accounts["facility_staff"]["username"] == accounts["blood_service_supervisor"]["username"]:
+        raise HTTPException(status_code=503, detail="Demo account usernames must be distinct.")
+    return secret, accounts
+
+
+def _session_cookie_value(user: DemoUser, secret: str, expires_at: int) -> str:
+    payload = json.dumps(
+        {
+            "username": user.username,
+            "actor_name": user.actor_name,
+            "role": user.role,
+            "expires_at": expires_at,
+        },
+        separators=(",", ":"),
+    ).encode()
+    encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    signature = hmac.new(secret.encode(), encoded.encode(), "sha256").hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def _decode_session_cookie(value: str, secret: str, accounts: dict[str, dict[str, str]]) -> DemoUser:
+    try:
+        encoded, signature = value.rsplit(".", 1)
+        expected = hmac.new(secret.encode(), encoded.encode(), "sha256").hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("Invalid signature")
+        payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        data = json.loads(payload)
+        if int(data["expires_at"]) <= int(time.time()):
+            raise ValueError("Expired session")
+        role = data["role"]
+        account = accounts[role]
+        if data["username"] != account["username"] or data["actor_name"] != account["actor_name"]:
+            raise ValueError("Account no longer matches session")
+        return DemoUser(username=data["username"], actor_name=data["actor_name"], role=role)
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=401, detail="Login required or session expired.") from error
+
+
+def require_authenticated_user(
+    session: str | None = Cookie(default=None, alias="trustledger_session"),
+) -> DemoUser:
+    secret, accounts = _demo_auth_settings()
+    if not session:
+        raise HTTPException(status_code=401, detail="Login required.")
+    return _decode_session_cookie(session, secret, accounts)
 
 
 def _connect_audit_db() -> sqlite3.Connection:
@@ -80,7 +172,9 @@ def _connect_audit_db() -> sqlite3.Connection:
             decision TEXT NOT NULL CHECK (decision IN ('accept', 'change', 'reject')),
             reason TEXT NOT NULL,
             changed_assessment TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            auth_method TEXT NOT NULL DEFAULT 'legacy_self_reported'
+                CHECK (auth_method IN ('legacy_self_reported', 'preprovisioned_demo_account'))
         );
         CREATE TRIGGER IF NOT EXISTS review_events_no_update
         BEFORE UPDATE ON review_events
@@ -94,6 +188,13 @@ def _connect_audit_db() -> sqlite3.Connection:
         END;
         """
     )
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(review_events)")
+    }
+    if "auth_method" not in columns:
+        connection.execute(
+            "ALTER TABLE review_events ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'legacy_self_reported'"
+        )
     return connection
 
 
@@ -101,9 +202,12 @@ def _review_dict(row: sqlite3.Row) -> dict:
     return {key: row[key] for key in row.keys()}
 
 
-def _record_review(submission: ReviewSubmission) -> tuple[dict, bool]:
+def _record_review(submission: ReviewSubmission, user: DemoUser) -> tuple[dict, bool]:
     record = submission.model_dump(mode="json")
+    record["actor_name"] = user.actor_name
+    record["role"] = user.role
     record["created_at"] = datetime.now(timezone.utc).isoformat()
+    record["auth_method"] = "preprovisioned_demo_account"
     with closing(_connect_audit_db()) as connection, connection:
         existing = connection.execute(
             "SELECT * FROM review_events WHERE review_id = ?",
@@ -118,9 +222,9 @@ def _record_review(submission: ReviewSubmission) -> tuple[dict, bool]:
         connection.execute(
             """
             INSERT INTO review_events
-                (review_id, incident_id, actor_name, role, decision, reason, changed_assessment, created_at)
+                (review_id, incident_id, actor_name, role, decision, reason, changed_assessment, created_at, auth_method)
             VALUES
-                (:review_id, :incident_id, :actor_name, :role, :decision, :reason, :changed_assessment, :created_at)
+                (:review_id, :incident_id, :actor_name, :role, :decision, :reason, :changed_assessment, :created_at, :auth_method)
             """,
             record,
         )
@@ -140,17 +244,17 @@ def health():
 
 
 @app.get("/api/config")
-def site_config():
+def site_config(user: DemoUser = Depends(require_authenticated_user)):
     return {
         "site_name": os.environ.get("TRUSTLEDGER_SITE_NAME", "TrustLedger"),
         "country": os.environ.get("TRUSTLEDGER_COUNTRY", "Kenya"),
         "temperature_policy": {"minimum_c": SAFE_MIN_C, "maximum_c": SAFE_MAX_C},
-        "identity_mode": "demo_self_reported",
+        "identity_mode": "environment_provisioned_demo_account",
     }
 
 
 @app.get("/api/dashboard")
-def dashboard():
+def dashboard(user: DemoUser = Depends(require_authenticated_user)):
     import pandas as pd
     incidents_path = OUTPUT_DIR / "incidents.csv"
     if not incidents_path.exists():
@@ -192,6 +296,7 @@ def incidents(
     limit: int = 100,
     offset: int = 0,
     search: str | None = None,
+    user: DemoUser = Depends(require_authenticated_user),
 ):
     import pandas as pd
     path = OUTPUT_DIR / "incidents.csv"
@@ -221,6 +326,7 @@ def transport_alerts(
     limit: int = 100,
     offset: int = 0,
     search: str | None = None,
+    user: DemoUser = Depends(require_authenticated_user),
 ):
     import pandas as pd
     path = OUTPUT_DIR / "transport_temperature_alerts.csv"
@@ -256,23 +362,81 @@ def transport_alerts(
 
 
 @app.get("/api/data-quality")
-def data_quality():
+def data_quality(user: DemoUser = Depends(require_authenticated_user)):
     return read_json("pipeline_summary.json")["temperature_quality"]
 
 
+@app.post("/api/auth/login")
+def login(credentials: DemoLoginRequest, response: Response):
+    secret, accounts = _demo_auth_settings()
+    authenticated: DemoUser | None = None
+    for role, account in accounts.items():
+        username_matches = hmac.compare_digest(
+            credentials.username.encode("utf-8"), account["username"].encode("utf-8")
+        )
+        password_matches = hmac.compare_digest(
+            credentials.password.encode("utf-8"), account["password"].encode("utf-8")
+        )
+        if username_matches and password_matches:
+            authenticated = DemoUser(
+                username=account["username"],
+                actor_name=account["actor_name"],
+                role=role,
+            )
+    if authenticated is None:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    max_age = 8 * 60 * 60
+    response.set_cookie(
+        key="trustledger_session",
+        value=_session_cookie_value(authenticated, secret, int(time.time()) + max_age),
+        max_age=max_age,
+        httponly=True,
+        secure=os.environ.get("TRUSTLEDGER_COOKIE_SECURE", "false").lower() == "true",
+        samesite=os.environ.get("TRUSTLEDGER_COOKIE_SAMESITE", "lax").lower(),
+        path="/api",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"user": authenticated.model_dump(), "expires_in": max_age}
+
+
+@app.get("/api/auth/me")
+def current_demo_user(
+    response: Response,
+    user: DemoUser = Depends(require_authenticated_user),
+):
+    response.headers["Cache-Control"] = "no-store"
+    return user.model_dump()
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response):
+    response.delete_cookie(
+        key="trustledger_session",
+        httponly=True,
+        secure=os.environ.get("TRUSTLEDGER_COOKIE_SECURE", "false").lower() == "true",
+        samesite=os.environ.get("TRUSTLEDGER_COOKIE_SAMESITE", "lax").lower(),
+        path="/api",
+    )
+    return {"status": "logged_out"}
+
+
 @app.post("/api/reviews")
-def create_review(submission: ReviewSubmission):
+def create_review(
+    submission: ReviewSubmission,
+    user: DemoUser = Depends(require_authenticated_user),
+):
     incidents_path = OUTPUT_DIR / "incidents.csv"
     if not incidents_path.exists():
         raise HTTPException(status_code=503, detail="Run the data pipeline first.")
     incidents_df = pd.read_csv(incidents_path, usecols=["incident_id"])
     if submission.incident_id not in set(incidents_df["incident_id"].astype(str)):
         raise HTTPException(status_code=404, detail="Incident not found")
-    record, created = _record_review(submission)
+    record, created = _record_review(submission, user)
     return {
         "status": "recorded" if created else "already_recorded",
         "review": record,
-        "notice": "Demo role and actor name are self-reported, not authenticated identity.",
+        "notice": "Reviewer identity is verified against a pre-provisioned demo account; this is prototype authentication, not production identity management.",
     }
 
 
@@ -281,6 +445,7 @@ def create_review(submission: ReviewSubmission):
 def review_audit_log(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    user: DemoUser = Depends(require_authenticated_user),
 ):
     with closing(_connect_audit_db()) as connection:
         total = connection.execute("SELECT COUNT(*) FROM review_events").fetchone()[0]
@@ -293,12 +458,15 @@ def review_audit_log(
         "total": total,
         "limit": limit,
         "offset": offset,
-        "notice": "Demo role and actor name are self-reported, not authenticated identity.",
+        "notice": "New audit events use pre-provisioned demo accounts. Older self-reported events remain marked as legacy. This is prototype authentication, not production identity management.",
     }
 
 
 @app.get("/api/power-correlations")
-def power_correlations(limit: int = 100):
+def power_correlations(
+    limit: int = 100,
+    user: DemoUser = Depends(require_authenticated_user),
+):
     import pandas as pd
     path = OUTPUT_DIR / "incident_power_correlations.csv"
     if not path.exists():
@@ -308,7 +476,10 @@ def power_correlations(limit: int = 100):
 
 
 @app.get("/api/units/affected/{incident_id}")
-def affected_units(incident_id: str):
+def affected_units(
+    incident_id: str,
+    user: DemoUser = Depends(require_authenticated_user),
+):
     import pandas as pd
     path = OUTPUT_DIR / "potentially_affected_units.csv"
     if not path.exists():
@@ -326,6 +497,7 @@ def affected_units_list(
     offset: int = 0,
     search: str | None = None,
     strategy: Literal["sustained", "baseline"] = "sustained",
+    user: DemoUser = Depends(require_authenticated_user),
 ):
     import pandas as pd
     filename = "baseline_candidate_units.csv" if strategy == "baseline" else "potentially_affected_units.csv"
@@ -358,7 +530,10 @@ def affected_units_list(
 
 
 @app.get("/api/incidents/{incident_id}")
-def incident_detail(incident_id: str):
+def incident_detail(
+    incident_id: str,
+    user: DemoUser = Depends(require_authenticated_user),
+):
     import pandas as pd
     incident_path = OUTPUT_DIR / "incidents.csv"
     affected_path = OUTPUT_DIR / "potentially_affected_units.csv"
