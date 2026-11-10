@@ -6,10 +6,10 @@ import type {
   Incident,
   AffectedUnit,
   ReviewEvent,
-  ReviewRole,
   ReviewDecision,
   SiteConfig,
   TransportAlert,
+  AuthenticatedUser,
 } from "@/lib/types";
 
 const API_BASE_URL = (
@@ -22,11 +22,14 @@ const CONNECTION_EVENT = "trustledger:offline-state";
 export interface ReviewSubmission {
   review_id: string;
   incident_id: string;
-  actor_name: string;
-  role: ReviewRole;
   decision: ReviewDecision;
   reason: string;
   changed_assessment: string | null;
+}
+
+export interface DemoLoginCredentials {
+  username: string;
+  password: string;
 }
 
 export interface ReviewResponse {
@@ -89,10 +92,16 @@ async function responseError(response: Response): Promise<Error> {
 
 async function request<T>(path: string): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
+  const isAuthCheck = path === "/api/auth/me";
+  const isSensitiveRead = isAuthCheck || path.startsWith("/api/audit-log") || path.startsWith("/api/reviews");
   let response: Response;
   try {
-    response = await fetch(url);
+    response = await fetch(url, { credentials: "include" });
   } catch {
+    if (isAuthCheck) {
+      announceConnection("offline");
+      throw new Error("Could not verify your demo session. Reconnect and sign in again.");
+    }
     const cached = offlineValue<T>(path);
     if (cached !== null) return cached;
     announceConnection("offline");
@@ -103,7 +112,7 @@ async function request<T>(path: string): Promise<T> {
 
   if (!response.ok) {
     const error = await responseError(response);
-    if (response.status >= 500) {
+    if (response.status >= 500 && !isSensitiveRead) {
       const cached = offlineValue<T>(path);
       if (cached !== null) return cached;
     }
@@ -111,7 +120,7 @@ async function request<T>(path: string): Promise<T> {
   }
 
   const data = (await response.json()) as T;
-  writeCache(path, data);
+  if (!isSensitiveRead) writeCache(path, data);
   announceConnection("online");
   return data;
 }
@@ -124,6 +133,29 @@ function listQuery(limit: number, offset: number, search: string) {
 
 export function fetchDashboard() {
   return request<DashboardData>("/api/dashboard");
+}
+
+export function fetchCurrentUser() {
+  return request<AuthenticatedUser>("/api/auth/me");
+}
+
+export async function loginDemoUser(credentials: DemoLoginCredentials) {
+  const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(credentials),
+  });
+  if (!response.ok) throw await responseError(response);
+  return (await response.json()) as { user: AuthenticatedUser; expires_in: number };
+}
+
+export async function logoutDemoUser() {
+  const response = await fetch(`${API_BASE_URL}/api/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) throw await responseError(response);
 }
 
 export function fetchSiteConfig() {
@@ -167,12 +199,15 @@ export function fetchReviewAudit() {
   return request<ListResponse<ReviewEvent>>("/api/audit-log?limit=100&offset=0");
 }
 
-export function getPendingReviews(): ReviewEvent[] {
+export function getPendingReviews(user?: AuthenticatedUser): ReviewEvent[] {
   if (typeof window === "undefined") return [];
   try {
     const serialized = window.localStorage.getItem(OUTBOX_KEY);
     if (!serialized) return [];
-    return JSON.parse(serialized) as ReviewEvent[];
+    const events = JSON.parse(serialized) as ReviewEvent[];
+    return user
+      ? events.filter((event) => event.actor_name === user.actor_name && event.role === user.role)
+      : events;
   } catch {
     try {
       window.localStorage.removeItem(OUTBOX_KEY);
@@ -202,6 +237,7 @@ function savePendingReviews(events: ReviewEvent[]) {
 async function postReview(submission: ReviewSubmission): Promise<ReviewResponse> {
   const response = await fetch(`${API_BASE_URL}/api/reviews`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(submission),
   });
@@ -211,6 +247,7 @@ async function postReview(submission: ReviewSubmission): Promise<ReviewResponse>
 
 export async function submitReview(
   submission: ReviewSubmission,
+  user: AuthenticatedUser,
 ): Promise<ReviewResponse> {
   try {
     const response = await postReview(submission);
@@ -220,6 +257,8 @@ export async function submitReview(
     if (!(error instanceof TypeError)) throw error;
     const event: ReviewEvent = {
       ...submission,
+      actor_name: user.actor_name,
+      role: user.role,
       created_at: new Date().toISOString(),
       sync_status: "pending_sync",
     };
@@ -233,7 +272,7 @@ export async function submitReview(
   }
 }
 
-export async function syncPendingReviews(): Promise<number> {
+export async function syncPendingReviews(user: AuthenticatedUser): Promise<number> {
   const pending = getPendingReviews();
   if (!pending.length || (typeof navigator !== "undefined" && !navigator.onLine)) {
     return 0;
@@ -241,20 +280,23 @@ export async function syncPendingReviews(): Promise<number> {
 
   const remaining = [...pending];
   let synced = 0;
-  for (const event of pending) {
+  for (let index = 0; index < pending.length; index += 1) {
+    const event = pending[index];
+    if (event.actor_name !== user.actor_name || event.role !== user.role) {
+      remaining.push(event);
+      continue;
+    }
     try {
       await postReview({
         review_id: event.review_id,
         incident_id: event.incident_id,
-        actor_name: event.actor_name,
-        role: event.role,
         decision: event.decision,
         reason: event.reason,
         changed_assessment: event.changed_assessment,
       });
-      remaining.shift();
       synced += 1;
     } catch (error) {
+      remaining.push(...pending.slice(index));
       savePendingReviews(remaining);
       if (error instanceof TypeError) {
         announceConnection("offline");

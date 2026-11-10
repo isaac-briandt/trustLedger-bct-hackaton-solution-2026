@@ -52,7 +52,7 @@ export interface SiteConfig {
   site_name: string;
   country: string;
   temperature_policy: TemperaturePolicy;
-  identity_mode: "demo_self_reported" | string;
+  identity_mode: string;
 }
 
 export interface EvaluationMetrics {
@@ -151,7 +151,14 @@ export interface ReviewEvent {
   reason: string;
   changed_assessment: string | null;
   created_at: string;
+  auth_method?: "preprovisioned_demo_account" | "legacy_self_reported";
   sync_status?: "pending_sync";
+}
+
+export interface AuthenticatedUser {
+  username: string;
+  actor_name: string;
+  role: ReviewRole;
 }
 
 export interface ListResponse<T> {
@@ -159,7 +166,6 @@ export interface ListResponse<T> {
   total: number;
   limit: number;
   offset: number;
-  notice?: string;
   notice?: string;
 }
 

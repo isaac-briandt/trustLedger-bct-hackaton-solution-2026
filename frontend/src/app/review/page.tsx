@@ -9,8 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { fetchIncidents, submitReview } from "@/lib/api";
-import type { ReviewDecision, ReviewRole } from "@/lib/types";
+import { fetchCurrentUser, fetchIncidents, submitReview, type ReviewSubmission } from "@/lib/api";
+import type { AuthenticatedUser, ReviewDecision } from "@/lib/types";
 import { formatDateTime } from "@/lib/date";
 
 const fieldClassName = "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm";
@@ -20,19 +20,25 @@ export default function ReviewPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [incidentId, setIncidentId] = useState("");
-  const [actorName, setActorName] = useState("");
-  const [role, setRole] = useState<ReviewRole>("facility_staff");
   const [decision, setDecision] = useState<ReviewDecision>("accept");
   const [reason, setReason] = useState("");
   const [changedAssessment, setChangedAssessment] = useState("");
   const [resultMessage, setResultMessage] = useState("");
 
+  const user = useQuery({
+    queryKey: ["current-user"],
+    queryFn: fetchCurrentUser,
+    enabled: typeof window !== "undefined",
+  });
   const incidents = useQuery({
     queryKey: ["review-incidents", search],
     queryFn: () => fetchIncidents(100, 0, search),
   });
   const mutation = useMutation({
-    mutationFn: submitReview,
+    mutationFn: ({ submission, actor }: {
+      submission: ReviewSubmission;
+      actor: AuthenticatedUser;
+    }) => submitReview(submission, actor),
     onSuccess: async (result) => {
       setResultMessage(result.notice);
       setReason("");
@@ -48,27 +54,29 @@ export default function ReviewPage() {
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setResultMessage("");
+    if (!user.data) return;
     mutation.mutate({
-      review_id: crypto.randomUUID(),
-      incident_id: incidentId,
-      actor_name: actorName.trim(),
-      role,
-      decision,
-      reason: reason.trim(),
-      changed_assessment: decision === "change" ? changedAssessment.trim() : null,
+      submission: {
+        review_id: crypto.randomUUID(),
+        incident_id: incidentId,
+        decision,
+        reason: reason.trim(),
+        changed_assessment: decision === "change" ? changedAssessment.trim() : null,
+      },
+      actor: user.data,
     });
   }
 
   return (
     <>
       <PageHeading
-        eyebrow="Human oversight · demo roles"
+        eyebrow="Human oversight · authenticated demo account"
         title="Review centre"
         description="A person reviews the incident evidence and records an Accept, Change or Reject decision for the investigation flag."
       />
 
       <div role="note" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
-        <strong>Human review only.</strong> This records a review of the incident flag; it does not release, quarantine, discard, declare compatibility or authorize transfusion. Role and name are self-reported demo values, not authentication.
+        <strong>Human review only.</strong> This records a review of the incident flag; it does not release, quarantine, discard, declare compatibility or authorize transfusion. The backend assigns your role and audit name from your configured demo account. Both demo roles currently share review permissions pending confirmation of the role matrix. This is prototype authentication, not production identity management.
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
@@ -79,25 +87,9 @@ export default function ReviewPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-5" onSubmit={onSubmit}>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="space-y-2 text-sm font-medium">
-                  Reviewer name
-                  <Input
-                    autoComplete="name"
-                    maxLength={80}
-                    minLength={2}
-                    onChange={(event) => setActorName(event.target.value)}
-                    required
-                    value={actorName}
-                  />
-                </label>
-                <label className="space-y-2 text-sm font-medium">
-                  Demo role
-                  <select className={fieldClassName} onChange={(event) => setRole(event.target.value as ReviewRole)} value={role}>
-                    <option value="facility_staff">Facility staff</option>
-                    <option value="blood_service_supervisor">Blood service supervisor</option>
-                  </select>
-                </label>
+              <div className="rounded-lg bg-muted/60 p-3 text-sm">
+                Signed in as <strong>{user.data?.actor_name ?? "Loading account…"}</strong>
+                {user.data && <span className="text-muted-foreground"> · {user.data.role === "facility_staff" ? "Facility staff" : "Blood service supervisor"}</span>}
               </div>
 
               <label className="block space-y-2 text-sm font-medium">
@@ -181,7 +173,7 @@ export default function ReviewPage() {
 
               {mutation.isError && <p role="alert" className="text-sm text-destructive">{mutation.error.message}</p>}
               {resultMessage && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{resultMessage}</p>}
-              <Button disabled={mutation.isPending || !incidentId} type="submit">
+              <Button disabled={mutation.isPending || !incidentId || !user.data} type="submit">
                 <ClipboardCheck aria-hidden="true" />
                 {mutation.isPending ? "Saving review…" : "Save human review"}
               </Button>
@@ -196,7 +188,7 @@ export default function ReviewPage() {
             <p><strong className="text-foreground">Change</strong> records a human-authored assessment and supporting reason.</p>
             <p><strong className="text-foreground">Reject</strong> records that the flag is not supported by the review evidence.</p>
             <p>These are prototype workflow states, not product disposition decisions. No inventory or patient-care system is changed.</p>
-            <p>For demonstration only, a reviewer may select either of two roles. Production use requires verified identity, authorization and server-side role checks.</p>
+            <p>The role is assigned by the backend from a pre-provisioned demo account. Production use requires a managed identity provider, reviewed authorization rules and secure session operations.</p>
           </CardContent>
         </Card>
       </div>

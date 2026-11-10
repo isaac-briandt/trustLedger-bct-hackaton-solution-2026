@@ -7,20 +7,30 @@ import { ErrorState, LoadingState } from "@/components/query-states";
 import { PageHeading } from "@/components/page-heading";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { fetchReviewAudit, getPendingReviews } from "@/lib/api";
+import { fetchCurrentUser, fetchReviewAudit, getPendingReviews } from "@/lib/api";
 import type { ReviewEvent } from "@/lib/types";
 import { formatDateTime } from "@/lib/date";
 
 export default function AuditLogPage() {
   const queryClient = useQueryClient();
   const [pendingEvents, setPendingEvents] = useState<ReviewEvent[]>([]);
+  const [otherAccountPendingCount, setOtherAccountPendingCount] = useState(0);
+  const user = useQuery({
+    queryKey: ["current-user"],
+    queryFn: fetchCurrentUser,
+    enabled: typeof window !== "undefined",
+  });
   const audit = useQuery({
     queryKey: ["audit-log"],
     queryFn: fetchReviewAudit,
   });
 
   useEffect(() => {
-    const refresh = () => setPendingEvents(getPendingReviews());
+    const refresh = () => {
+      const allPending = getPendingReviews();
+      setPendingEvents(user.data ? getPendingReviews(user.data) : []);
+      setOtherAccountPendingCount(allPending.length - (user.data ? getPendingReviews(user.data).length : 0));
+    };
     const onConnectionChange = () => {
       refresh();
       void queryClient.invalidateQueries({ queryKey: ["audit-log"] });
@@ -28,7 +38,7 @@ export default function AuditLogPage() {
     refresh();
     window.addEventListener("trustledger:offline-state", onConnectionChange);
     return () => window.removeEventListener("trustledger:offline-state", onConnectionChange);
-  }, [queryClient]);
+  }, [queryClient, user.data]);
 
   const events = [
     ...pendingEvents,
@@ -47,8 +57,13 @@ export default function AuditLogPage() {
       />
 
       <div role="note" className="mb-6 rounded-xl border bg-muted/50 px-4 py-3 text-sm leading-6 text-muted-foreground">
-        Review events are append-only in the local prototype database. Offline entries are held in this browser until they sync. Demo names and roles are self-reported and are not an identity or authorization system.
+        Review events are append-only in the local prototype database. New events use the signed-in demo account; older records are labelled as legacy. Offline entries are held in this browser until they sync. This is not production identity management.
       </div>
+      {otherAccountPendingCount > 0 && (
+        <p role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          {otherAccountPendingCount} pending review{otherAccountPendingCount === 1 ? "" : "s"} from another demo account {otherAccountPendingCount === 1 ? "is" : "are"} hidden while this account is active. Sign in as the original reviewer to view and sync them.
+        </p>
+      )}
 
       {audit.isPending && events.length === 0 && <LoadingState label="Loading the audit log…" />}
       {audit.isError && events.length === 0 && (
@@ -81,6 +96,10 @@ export default function AuditLogPage() {
                     )}
                     <p className="mt-3 text-xs text-muted-foreground">
                       {event.actor_name} · {event.role === "facility_staff" ? "Facility staff" : "Blood service supervisor"}
+                      {" · "}
+                      {event.auth_method === "preprovisioned_demo_account"
+                        ? "Pre-provisioned demo account"
+                        : "Legacy self-reported identity"}
                     </p>
                   </div>
                   <time className="text-xs text-muted-foreground" dateTime={event.created_at}>

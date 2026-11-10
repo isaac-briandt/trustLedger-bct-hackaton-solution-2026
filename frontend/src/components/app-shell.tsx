@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Suspense } from "react";
+import { useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
   ClipboardCheck,
   Database,
   LayoutDashboard,
+  LogOut,
   Menu,
   PackageSearch,
   ShieldCheck,
@@ -19,6 +22,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { OfflineStatus } from "@/components/offline-status";
+import { fetchCurrentUser, logoutDemoUser } from "@/lib/api";
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "TrustLedger";
 const countryLabel = process.env.NEXT_PUBLIC_COUNTRY_LABEL ?? "Kenya blood cold-chain monitoring";
@@ -33,7 +37,47 @@ const navigation = [
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<div role="status" className="p-8 text-sm text-muted-foreground">Preparing TrustLedger…</div>}>
+      <RouteAwareAppShell>{children}</RouteAwareAppShell>
+    </Suspense>
+  );
+}
+
+function RouteAwareAppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  if (pathname === "/login") return <>{children}</>;
+  return <AuthenticatedAppShell>{children}</AuthenticatedAppShell>;
+}
+
+function AuthenticatedAppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const currentUser = useQuery({
+    queryKey: ["current-user"],
+    queryFn: fetchCurrentUser,
+    enabled: typeof window !== "undefined",
+    retry: false,
+  });
+  const logout = useMutation({
+    mutationFn: logoutDemoUser,
+    onSuccess: () => {
+      queryClient.clear();
+      router.replace("/login");
+    },
+  });
+
+  useEffect(() => {
+    if (currentUser.isError) {
+      const next = encodeURIComponent(pathname || "/dashboard");
+      router.replace(`/login?next=${next}`);
+    }
+  }, [currentUser.isError, pathname, router]);
+
+  const user = currentUser.data;
+  const sessionVerified = Boolean(user);
 
   const nav = (
     <>
@@ -111,15 +155,50 @@ export function AppShell({ children }: { children: ReactNode }) {
               {countryLabel}
             </div>
           </div>
-          <div className="rounded-full border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground">
-            Demo roles · synthetic data
-          </div>
+          {user ? (
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <p className="text-xs font-medium">{user.actor_name}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {user.role === "facility_staff" ? "Facility staff" : "Blood service supervisor"} · demo account
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => logout.mutate()}
+                disabled={logout.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+              >
+                <LogOut className="size-3.5" aria-hidden="true" />
+                {logout.isPending ? "Signing out…" : "Sign out"}
+              </button>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">Checking demo session…</span>
+          )}
         </header>
-        <OfflineStatus />
-        <main className="mx-auto w-full max-w-[1600px] px-5 py-7 sm:px-8 sm:py-9">
+        {logout.isError && (
+          <p role="alert" className="border-b bg-destructive/10 px-5 py-2 text-center text-xs text-destructive sm:px-8">
+            {logout.error.message}
+          </p>
+        )}
+        {user && <OfflineStatus user={user} />}
+        <main
+          aria-busy={!sessionVerified}
+          aria-hidden={!sessionVerified}
+          className="mx-auto w-full max-w-[1600px] px-5 py-7 sm:px-8 sm:py-9"
+          inert={!sessionVerified}
+        >
           {children}
         </main>
       </div>
+      {!sessionVerified && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 px-6 backdrop-blur-sm">
+          <p role="status" className="rounded-lg border bg-card px-5 py-4 text-sm text-muted-foreground shadow-sm">
+            Checking your TrustLedger demo session…
+          </p>
+        </div>
+      )}
     </div>
   );
 }
