@@ -1,42 +1,94 @@
-# TrustLedger architecture — Milestone 1
+# TrustLedger architecture
+
+## Component and data-flow diagram
 
 ```mermaid
-flowchart TD
-    A[Hackathon CSV dataset] --> B[Python ingestion and validation]
-    B --> C[Temperature quality checks]
-    B --> D[Unit movement reconstruction]
-    C --> E[Cold-chain event grouping]
-    D --> F[Incident-to-unit overlap matching]
-    E --> F
-    G[Power outage records] --> H[Power context correlation]
-    E --> H
-    F --> I[Processed CSV and JSON outputs]
-    H --> I
-    I --> J[FastAPI read API]
-    J --> K[Next.js read-only dashboard - implemented]
-    K --> L[Authorized human review - next milestone]
-    L --> M[Decision and audit trail - next milestone]
+flowchart LR
+    subgraph Local["Facility / blood-service workstation"]
+        UI["Responsive Next.js PWA<br/>overview · incident · review"]
+        CACHE["Browser cache<br/>last successful GETs"]
+        OUTBOX["Local review outbox<br/>pending sync"]
+        SW["Service worker<br/>visited app pages/assets"]
+        UI <--> CACHE
+        UI --> OUTBOX
+        SW --> UI
+    end
+
+    subgraph Prototype["TrustLedger prototype services"]
+        CSV["Synthetic CSV data"]
+        PIPE["Python validation +<br/>incident/unit matching"]
+        OUTPUT["Processed CSV / JSON"]
+        API["FastAPI<br/>read API + review API"]
+        AUDIT[("SQLite append-only<br/>review events")]
+        CSV --> PIPE --> OUTPUT --> API --> UI
+        UI -->|"Accept / Change / Reject<br/>investigation flag only"| API
+        API --> AUDIT
+        OUTBOX -->|"retry with review ID"| API
+    end
+
+    subgraph Wider["Wider blood information system (future integration)"]
+        SENSOR["Facility sensors /<br/>inventory system"]
+        HIS["Blood service system"]
+        FHIR["HL7 FHIR adapter"]
+        ISBT["ISBT 128 identifier mapping"]
+        SENSOR -. "future authenticated feed" .-> PIPE
+        API -. "future reviewed integration" .-> FHIR
+        ISBT -. "identifier crosswalk" .-> HIS
+        FHIR -. "Organization · Location · Observation ·<br/>DetectedIssue · Provenance / AuditEvent" .-> HIS
+    end
 ```
 
-## Current data flow
+Solid arrows are implemented in the prototype. Dashed arrows are conceptual future integration points, not deployed adapters. The dashboard does not connect to a real inventory, quarantine, laboratory or patient-care system.
 
-1. The organizer's synthetic CSV files are placed in `data/raw/`.
-2. The Python pipeline validates hourly temperature records, identifies sentinel glitches, estimates missing hourly observations, and groups out-of-range readings into episodes.
-3. Episodes are classified as `warning` or `sustained`. The prototype's sustained escalation rule is four consecutive hourly readings above 6°C, matching the starter generator's excursion-day trigger. This is configurable and must be validated by a blood-service expert before any real-world use.
-4. Unit holding intervals are reconstructed from the processing facility, screening completion date, opening-stock location and confirmed transfers. A unit is treated as in transit after dispatch until a receipt is confirmed. A missing `received_at` therefore creates an unknown-location period.
-5. Sustained incidents are matched to RBC/WB unit holding intervals. These are investigation candidates, not proof of unsafe product.
-6. Power outage intervals are correlated with temperature incident windows.
-7. FastAPI exposes read-only endpoints for the Next.js interface.
+## Implemented flow
 
-## Current limitations
+1. Synthetic CSV files are loaded by the Python pipeline.
+2. Timestamp parsing repairs the missing separator form `YYYY-MM-DDHH:MM:SS`. Missing values, sentinels, duplicate timestamps, hourly gaps and out-of-range readings are measured.
+3. Consecutive out-of-range records are grouped. A sustained high-temperature episode requires four consecutive hourly readings above the configured upper bound. This threshold is an explicit prototype rule.
+4. Confirmed unit holding intervals are reconstructed from available processing and transfer data. A dispatched unit with no confirmed receipt becomes location-unknown after dispatch.
+5. RBC/WB units overlapping sustained incidents are returned as investigation candidates. A second, broader single-reading baseline list is generated for fallback use. Evaluation-only exposure labels are used only to calculate aggregate comparison metrics; labels are omitted from both API candidate views.
+6. FastAPI exposes processed metrics and lists. Human review submissions are validated and appended to a local SQLite event table. Database triggers prevent row updates and deletes; a unique review ID makes retries idempotent.
+7. The browser caches successful GET responses and stores review actions locally if a network request fails. It shows a stale/offline/pending status and retries pending events when connectivity returns.
 
-- Temperature records are hourly and have no fridge/device identifier; incident timing is approximate and assumes one monitored fridge stream per facility.
-- Unit processing/release timestamps are not supplied. For new stock, `tested_date` is used as the earliest available proxy. Opening stock starts at 1 November 2025 and uses its recorded current facility as the opening location.
-- A date-only `status_date` is treated as valid through the end of that day.
-- Only RBC and WB units are included in this first 2–6°C traceability workflow. Component-specific rules require expert validation.
-- The `temp_excursion_exposed` unit field is retained in an internal evaluation output only; it is not used to generate detections and is not returned by the API.
-- No clinical disposition or blood release decision is automated.
+## Human review and authorization boundary
 
-## Wider system position
+Accept, Change and Reject apply to the **investigation flag**, not the blood unit's clinical or operational disposition. A reason is mandatory; Change also requires a revised assessment. Neither API nor UI can release, clear, discard, declare compatible, or order transfusion of a unit.
 
-TrustLedger is an incident-detection and traceability workflow that would sit between facility sensor/inventory systems and the wider blood service information system. Future adapters could map unit identifiers to ISBT 128 and exchange relevant healthcare events through HL7 FHIR. Those standards are not implemented in this milestone.
+The UI offers `facility_staff` and `blood_service_supervisor` demo roles. The actor and role are self-reported and are not authenticated; this is a demonstration of the human decision step, not a secure two-role system. Production requires identity federation, server-side role/permission checks, protected storage, audit retention and authorized integration. Local SQLite triggers are append-only at the application database layer, not tamper-proof against an administrator with file access.
+
+## Offline and low-connectivity behavior
+
+- The service worker caches the app shell and static assets; GET responses are cached in browser storage after a successful API response.
+- When a request fails, a cached response may be shown with a visible stale-data banner. A never-cached view remains unavailable and the UI reports the error.
+- Inventory can switch from sustained-event candidates to the persisted single-reading baseline list when the primary rule is uncertain or unavailable.
+- Review actions can be queued in browser local storage with an explicit pending-sync marker. The API deduplicates retries using the review ID.
+- This is a single-browser fallback, not multi-device synchronization or an offline-first shared database. It cannot provide fresh data without connectivity and does not send SMS.
+- The responsive dashboard uses paginated API queries and is usable on small screens. Country/site branding and threshold values are settings, not source edits, but rule changes must be approved and the pipeline rerun.
+
+## Data model
+
+| Entity | Prototype fields | Key constraints |
+|---|---|---|
+| Facility | `facility_id` | Source dataset identifier; no device hierarchy supplied |
+| Temperature observation | `facility_id`, `recorded_at`, `temp_c`, quality status | Hourly; sentinels excluded from excursion logic |
+| Incident | `incident_id`, facility, start/end, severity, rule | Approximate window; rule reason shown |
+| Unit candidate | unit, component, blood group, facility and overlap window | RBC/WB only; investigation candidate, not product disposition |
+| Review event | review ID, incident ID, actor/role, decision, reason, changed assessment, timestamp | Append-only table; demo identity only |
+
+## Standards mapping (conceptual)
+
+| TrustLedger concept | Candidate standard mapping | Current state |
+|---|---|---|
+| Facility | HL7 FHIR `Organization` / `Location` | CSV facility key only |
+| Temperature reading | FHIR `Observation` with effective time, quantity and device reference | CSV row; device ID is not available |
+| Temperature incident | FHIR `DetectedIssue` or workflow `Task` | Local incident record |
+| Unit inventory and transfer | FHIR `InventoryItem` / `SupplyDelivery`; ISBT 128 Donation Identification Number and Product Code crosswalk | Synthetic unit ID and transfer rows; not ISBT 128 |
+| Human review and provenance | FHIR `Provenance` / `AuditEvent` | Local SQLite event fields; no FHIR adapter |
+
+The table describes a future mapping, not standards conformance. A blood-service integration partner must confirm profiles, terminology, identifiers and workflow before implementation.
+
+## Configuration and known limits
+
+The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_MIN_C`, `TRUSTLEDGER_TEMP_MAX_C`, and `TRUSTLEDGER_CORS_ORIGINS`; `TRUSTLEDGER_AUDIT_DB_PATH` can select the local audit database location. The frontend reads `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_COUNTRY_LABEL`, and `NEXT_PUBLIC_API_BASE_URL`. Current processing uses a single RBC/WB temperature range; it is not a complete country policy engine. Threshold changes require blood-service validation, consistent environment settings, and reprocessing the dataset.
+
+The input has no fridge identifier, timestamps are hourly, some transfer receipts are missing, and all supplied data is synthetic. The benchmark is retrospective on labels from the same dataset, not a held-out test. Do not extrapolate its precision or recall to another facility, country or real clinical setting.

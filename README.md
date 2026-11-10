@@ -1,111 +1,117 @@
 # TrustLedger
 
-**AI-assisted cold-chain incident detection, data quality validation and blood-unit traceability.**  
-Terumo BCT Africa Hackathon 2026 · Challenge area: Data Quality & Cold Chain
+**Cold-chain incident detection and human investigation support for blood-bank teams.**
+Terumo BCT Africa Hackathon 2026 · Challenge area: Cold chain and data quality
 
-## Milestones 1–2 status
+## Problem, user and workflow
 
-The Python data foundation and read-only API are implemented and tested. The first API-backed dashboard is now available.
+A facility cold-chain officer needs to identify temperature excursions, understand which blood units may have overlapped the event, and send the evidence to a qualified reviewer without treating a data flag as a clinical decision. A blood-service supervisor can review the incident evidence and record an Accept, Change or Reject decision for the **investigation flag**.
 
-- [x] Initial monorepo structure
-- [x] CSV ingestion for facilities, temperature logs, units, donations, transfers and power outages
-- [x] Temperature sentinel, duplicate and missing-hour validation
-- [x] Out-of-range episode grouping and sustained-event classification
-- [x] Conservative historical unit-location reconstruction
-- [x] RBC/WB incident-to-unit overlap matching
-- [x] Power-outage correlation
-- [x] Initial FastAPI read endpoints
-- [x] Pipeline unit tests and API smoke tests
-- [x] Next.js dashboard (read-only overview, incidents, traceability and data quality)
-- [ ] Human decision workflow and audit trail
-- [ ] AI model and baseline evaluation
-- [ ] Offline mode / sync
+The supplied synthetic data models Kenyan facilities. The named user roles are prototype personas and must be checked with a blood-service expert before being presented as validated local workflow.
 
-## Repository structure
+1. The pipeline validates temperature records and groups continuous out-of-range readings.
+2. Four consecutive hourly readings above the configured upper limit are marked sustained. Confirmed unit-location intervals are overlapped with sustained events to create investigation candidates.
+3. Staff inspect temperature history, sensor-quality indicators, possible power-outage context and candidate units.
+4. A human records an investigation review with a reason. The append-only local audit log records the selected demo role, name, decision and time.
 
-```text
-trustledger/
-├── backend/              # FastAPI and Python data pipeline
-├── data/
-│   ├── raw/              # Organizer CSV files (ignored by Git)
-│   └── processed/        # Generated outputs (ignored by Git)
-├── frontend/             # Next.js dashboard
-└── docs/                 # Architecture and dataset audit
-```
+No page releases, quarantines, discards or declares a unit safe or compatible. No real inventory or patient-care system is changed.
 
-## Quick start
+## Working prototype
 
-Requirements: Python 3.10+.
+- **API:** FastAPI endpoints serve generated pipeline results and review/audit events.
+- **Dashboard:** Next.js responsive pages cover overview, incidents, incident details, inventory traceability, data quality, review and audit.
+- **Source data:** Synthetic hackathon CSVs in `data/raw/`; generated outputs in `data/processed/`.
+- **Live API values:** Dashboard counts and benchmark values come from the pipeline output; they are not hardcoded in the UI.
 
-1. Unzip the organizer's starter dataset.
-2. Copy the CSV files into `data/raw/`.
-3. Create and activate a virtual environment from the repository root:
+### Data feature compared with baseline
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-pip install -r backend/requirements.txt
-```
+The data feature is a sustained-event filter: require four consecutive hourly readings above the configured upper temperature limit before matching units. The baseline matches units for any single out-of-range reading. Both are evaluated against the starter dataset's evaluation-only exposure labels, at unique RBC/WB unit level:
 
-4. Run the pipeline:
+| Method | Candidate units | Precision | Recall | True positives | False positives | False negatives |
+|---|---:|---:|---:|---:|---:|---:|
+| Four consecutive readings (feature) | 6,396 | 94.5% | 90.4% | 6,042 | 354 | 641 |
+| Any out-of-range reading (baseline) | 23,017 | 28.2% | 97.1% | 6,492 | 16,525 | 191 |
 
-```bash
-cd backend
-python -m app.run_pipeline --data ../data/raw --output ../data/processed
-```
+This retrospective evaluation uses the supplied synthetic labels; it is **not held out** and does not establish real-world or cross-country performance. The feature returns fewer candidates and has higher measured precision, with lower recall than the baseline. The interface shows this trade-off, sample size and limitation. It is a transparent data rule, not a trained AI model, probability or clinical recommendation.
 
-5. Run tests:
+## Human control, audit and fallback
 
-```bash
-pytest -q
-```
+- Accept / Change / Reject records a human review of an **investigation flag**; a reason is required and Change also requires the revised assessment.
+- The backend uses SQLite with database triggers that reject event updates and deletions. A client-generated review ID makes offline retries idempotent.
+- Two demo roles are selectable (facility staff and blood service supervisor), but names and roles are self-reported. This is **not authentication or access control** and must not be used as such.
+- The browser caches successful API GET responses, caches visited app pages with a service worker, and queues review submissions locally when the API cannot be reached. Queued actions are visibly marked and sync when the API returns.
+- Inventory has a selectable single-reading baseline view for use when the sustained-event rule is unavailable or uncertain. The broader list is marked as a fallback and remains an investigation queue, not a disposition recommendation.
+- Cached readings can be stale; pending events remain on that browser until accepted by the API. If there is no cached copy, the app reports that data is unavailable. Do not treat a cached or baseline result as a disposition decision.
 
-6. Start the API:
+## Architecture and data standards
 
-```bash
-uvicorn app.main:app --reload --port 8000
-```
+See [docs/architecture.md](docs/architecture.md) for the architecture/data-flow diagram, data model, wider-system position, offline behavior and a conceptual mapping to HL7 FHIR and ISBT 128. Those standards are mapping targets only; no standards-compliant adapter is implemented.
 
-Open `http://localhost:8000/docs` for interactive API documentation.
+## Run locally
 
-7. Start the dashboard in another terminal:
+Requirements: Python 3.10+, Node.js 22+, npm.
 
-```bash
-npm --prefix frontend install
-npm --prefix frontend run dev
-```
+1. Place the organizer's synthetic CSVs in `data/raw/`.
+2. Create and activate a Python environment, then install dependencies:
 
-Open `http://localhost:3000`. The frontend reads the API at `http://localhost:8000` by default; see `.env.example` to configure another base URL.
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate  # Windows: .venv\Scripts\activate
+   pip install -r backend/requirements.txt
+   ```
 
-## API endpoints
+3. Generate processed data:
 
-- `GET /health`
-- `GET /api/dashboard`
-- `GET /api/data-quality`
-- `GET /api/incidents`
-- `GET /api/incidents/{incident_id}`
-- `GET /api/units/affected/{incident_id}`
-- `GET /api/units/affected` (searchable and paginated)
-- `GET /api/power-correlations`
+   ```bash
+   cd backend
+   python -m app.run_pipeline --data ../data/raw --output ../data/processed
+   cd ..
+   ```
 
-## Current pipeline findings
+4. Start the API in one terminal:
 
-The supplied synthetic dataset contains 399,280 hourly temperature rows, 55 known sensor glitches, an estimated 12,440 missing hourly observations, 4,607 readings above 6°C, 360 sustained high-temperature episodes under the prototype's four-consecutive-reading rule, and 6,396 unique RBC/WB unit candidates overlapping those sustained episodes.
+   ```bash
+   source .venv/bin/activate
+   cd backend
+   uvicorn app.main:app --reload --port 8000
+   ```
 
-These are synthetic-data results, not facts about real facilities. See [`docs/data-audit.md`](docs/data-audit.md) for definitions and limitations.
+5. In another terminal, copy `frontend/.env.example` to `frontend/.env.local`, install and start:
 
-## Safety and interpretation
+   ```bash
+   npm --prefix frontend install
+   npm --prefix frontend run dev
+   ```
 
-- The prototype is advisory. It does not determine product safety or authorize release, discard, quarantine removal, compatibility or transfusion.
-- A qualified blood-service professional must review evidence and make disposition decisions.
-- The 2–6°C threshold is taken from the starter dataset for RBC/WB only. Component-specific requirements and incident escalation rules must be validated with a blood-service expert.
-- Missing transfer receipt timestamps result in unknown location, not an assumed arrival.
-- The dataset is synthetic and models a Kenyan blood system. Do not present its findings as real-world Kenyan facility statistics.
+6. Open [http://localhost:3000](http://localhost:3000). API documentation is at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-## AI tools used
+Run backend checks from the repository root with `.venv/bin/pytest -q`. Run frontend checks with `npm --prefix frontend run lint`, `npm --prefix frontend run typecheck` and `npm --prefix frontend run build`.
 
-ChatGPT was used to assist with dataset inspection, architecture planning, code drafting and test generation. The team must review, understand, test and be able to explain all submitted code.
+## Configuration for another site
 
-## Next milestone
+The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_MIN_C`, `TRUSTLEDGER_TEMP_MAX_C` and `TRUSTLEDGER_CORS_ORIGINS` from its environment. The frontend reads `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_COUNTRY_LABEL` and `NEXT_PUBLIC_API_BASE_URL`; examples are in `.env.example` and `frontend/.env.example`. `TRUSTLEDGER_AUDIT_DB_PATH` optionally selects the local audit database path. Set policy values only after the relevant blood-service authority confirms them, then rerun the pipeline with the same settings. The current workflow supports one RBC/WB temperature range and English labels; component-specific rules, translation, and country-specific legal workflows need further implementation and expert review.
 
-Add the authenticated human Accept / Change / Reject decision flow with role checks and an append-only audit trail. The dashboard currently leaves review and audit pages unavailable because the API is read-only. AI anomaly detection and its baseline comparison follow after the deterministic pipeline is stable.
+## Safety and limitations
+
+- Data is synthetic and for demonstration only. Do not use it to make real facility or patient-care decisions.
+- Hourly observations bound incident timing approximately; the dataset has no fridge/device identifier.
+- A candidate match is evidence for investigation, not proof of unsafe product. An unknown transfer receipt means unknown location.
+- Sensor glitches and missing-hour estimates are surfaced; estimated gaps are not observed records.
+- The threshold and four-reading rule are prototype settings, not universal clinical policy.
+- Local review storage, self-reported roles, browser cache and outbox are single-device demo mechanisms. Production requires verified identity, authorization, a protected shared audit store, retention policy, encrypted transport/storage, and integration with authorized inventory/quarantine systems.
+- Weak-network fallback uses last-known cached data and queues review events; it does not support SMS and cannot synchronize until connectivity returns.
+
+## Demo readiness
+
+[docs/demo-script.md](docs/demo-script.md) contains a timed walkthrough under three minutes and the checklist for recording. A real team-recorded demo video still needs to be produced and attached to the submission; no recording is claimed in this repository.
+
+## Evidence
+
+- Backend unit/API tests: `backend/tests/`
+- Data audit and calculation definitions: [docs/data-audit.md](docs/data-audit.md)
+- Architecture diagram and mapping: [docs/architecture.md](docs/architecture.md)
+- Demo recording plan: [docs/demo-script.md](docs/demo-script.md)
+
+## AI tools
+
+AI tools assisted with code drafting and analysis. Team members must review the implementation, understand the benchmark and limitations, and be able to explain the workflow and safety boundaries to judges.

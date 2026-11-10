@@ -1,46 +1,38 @@
 # TrustLedger frontend
 
-Next.js App Router dashboard built with TypeScript, Tailwind CSS, shadcn/ui, Recharts, Lucide React and TanStack Query.
+Next.js App Router dashboard built with TypeScript, Tailwind CSS, Recharts, Lucide React and TanStack Query.
 
 ## Run locally
 
-From the repository root, start the FastAPI service in one terminal:
+Run the data pipeline and FastAPI service as described in the [root README](../README.md). Then:
 
 ```bash
-cd backend
-uvicorn app.main:app --reload --port 8000
-```
-
-In another terminal, start the frontend:
-
-```bash
+cp frontend/.env.example frontend/.env.local
 npm --prefix frontend install
 npm --prefix frontend run dev
 ```
 
-Open `http://localhost:3000`. The API base defaults to `http://localhost:8000`; override it with `NEXT_PUBLIC_API_BASE_URL` when needed. The root `.env.example` contains the local default.
+Open `http://localhost:3000`. The app uses `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`).
 
-Useful checks:
+## Pages
+
+- `/dashboard` — API-fed counts, facility monitoring, incident trends and retrospective feature-vs-baseline metrics.
+- `/incidents` and `/incidents/[id]` — searchable incident evidence, temperature timeline, outage context and candidate units.
+- `/inventory` — searchable, paginated investigation candidates with an explicit single-reading baseline fallback view.
+- `/data-quality` — sensor glitches, missing observations, duplicates and the configured range.
+- `/review` — human Accept / Change / Reject of an investigation flag; two self-reported demo roles, reason required.
+- `/audit-log` — append-only local review events and browser-pending offline reviews.
+
+## Offline behavior and safety
+
+Successful GET responses are cached in browser local storage. In production, the service worker caches the app shell and static assets. If an API request fails, a cached response may be shown with a stale-data banner; uncached data remains unavailable. Review actions may be stored in a browser-only outbox and retried when connectivity returns. A pending action is not an API audit event until synced.
+
+The role selector is a demo device, not authentication. Review choices concern the incident investigation flag only; they do not make or authorize a blood-unit disposition, compatibility or transfusion decision.
+
+## Checks
 
 ```bash
 npm --prefix frontend run lint
 npm --prefix frontend run typecheck
 npm --prefix frontend run build
 ```
-
-## Pages
-
-- `/dashboard` — live pipeline statistics, monthly incident counts, facility monitoring and latest incidents.
-- `/incidents` — searchable, paginated incident list.
-- `/incidents/[id]` — temperature history, outage correlations and investigation-candidate units.
-- `/inventory` — searchable, paginated unit-to-incident matches.
-- `/data-quality` — sensor glitches, missing observations, duplicates and range checks.
-- `/review` and `/audit-log` — clearly marked placeholders until the API supports authenticated decisions and audit persistence.
-
-Dashboard figures are fetched from the API; no dataset statistics are hardcoded. API errors are shown in the interface instead of replacing failed responses with sample data.
-
-## Data and safety
-
-Timestamp parsing repairs the missing date/time separator form `YYYY-MM-DDHH:MM:SS` at ingestion and before display. Invalid timestamps remain visibly unavailable instead of being used on charts.
-
-Incident and inventory records are read-only. Potentially affected units are **investigation candidates only**; the application does not decide safety or authorize release, discard, quarantine removal, compatibility or transfusion. Review and audit actions must not be added until authentication, role checks and an append-only audit API are implemented.
