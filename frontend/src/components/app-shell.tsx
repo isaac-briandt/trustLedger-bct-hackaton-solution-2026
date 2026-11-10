@@ -17,7 +17,10 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { OfflineStatus } from "@/components/offline-status";
 
+const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "TrustLedger";
+const countryLabel = process.env.NEXT_PUBLIC_COUNTRY_LABEL ?? "Kenya blood cold-chain monitoring";
 const navigation = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Incidents", href: "/incidents", icon: AlertTriangle },
@@ -37,7 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Snowflake className="size-5" aria-hidden="true" />
         </div>
         <div>
-          <p className="text-[15px] font-bold tracking-tight">TrustLedger</p>
+          <p className="text-[15px] font-bold tracking-tight">{appName}</p>
           <p className="text-xs text-muted-foreground">Cold-chain intelligence</p>
         </div>
       </div>
@@ -103,13 +106,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
             <div className="hidden items-center gap-2 text-sm text-muted-foreground sm:flex">
               <Snowflake className="size-4 text-primary" aria-hidden="true" />
-              Kenya blood cold-chain monitoring
+              {countryLabel}
             </div>
           </div>
           <div className="rounded-full border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground">
-            Read-only prototype
+            Demo roles · synthetic data
           </div>
         </header>
+        <OfflineStatus />
         <main className="mx-auto w-full max-w-[1600px] px-5 py-7 sm:px-8 sm:py-9">
           {children}
         </main>
