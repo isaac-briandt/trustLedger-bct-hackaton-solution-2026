@@ -114,6 +114,21 @@ export interface PowerCorrelation {
   overlap_minutes: number;
 }
 
+export interface TransportAlert {
+  transfer_id: string;
+  unit_id: string;
+  component: string;
+  blood_group: string;
+  unit_status: string;
+  from_facility_id: string;
+  to_facility_id: string;
+  transfer_type: string;
+  dispatched_at: string | null;
+  received_at: string | null;
+  transport_mode: string;
+  coolbox_max_temp_c: number;
+}
+
 export interface IncidentDetail {
   incident: Incident;
   potentially_affected_units: AffectedUnit[];
@@ -144,6 +159,7 @@ export interface ListResponse<T> {
   total: number;
   limit: number;
   offset: number;
+  notice?: string;
   notice?: string;
 }
 

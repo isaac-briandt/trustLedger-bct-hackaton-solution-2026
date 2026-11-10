@@ -88,6 +88,9 @@ function IncidentDetailContent() {
         <CircleAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
         <p><strong>Investigation candidates only.</strong> {noticeDetails} No release, discard, quarantine-removal, compatibility or transfusion action is available here.</p>
       </div>
+      <div role="note" className="mb-6 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-950">
+        <strong>Facility-level evidence:</strong> temperature records identify a facility, not an individual refrigerator or sensor. This incident cannot be attributed to a specific appliance from the supplied dataset.
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <EvidenceMetric label="Peak temperature" value={`${incident.peak_temp_c.toFixed(1)}°C`} icon={Thermometer} />

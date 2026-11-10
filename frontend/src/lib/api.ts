@@ -9,6 +9,7 @@ import type {
   ReviewRole,
   ReviewDecision,
   SiteConfig,
+  TransportAlert,
 } from "@/lib/types";
 
 const API_BASE_URL = (
@@ -136,6 +137,12 @@ export function fetchDataQuality() {
 export function fetchIncidents(limit = 50, offset = 0, search = "") {
   return request<ListResponse<Incident>>(
     `/api/incidents?${listQuery(limit, offset, search)}`,
+  );
+}
+
+export function fetchTransportAlerts(limit = 50, offset = 0, search = "") {
+  return request<ListResponse<TransportAlert>>(
+    `/api/transport-alerts?${listQuery(limit, offset, search)}`,
   );
 }
 

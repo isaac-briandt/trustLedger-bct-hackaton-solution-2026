@@ -13,6 +13,7 @@ import {
   PackageSearch,
   ShieldCheck,
   Snowflake,
+  Truck,
   X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -24,6 +25,7 @@ const countryLabel = process.env.NEXT_PUBLIC_COUNTRY_LABEL ?? "Kenya blood cold-
 const navigation = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Incidents", href: "/incidents", icon: AlertTriangle },
+  { label: "Transport alerts", href: "/transport-alerts", icon: Truck },
   { label: "Inventory", href: "/inventory", icon: PackageSearch },
   { label: "Data quality", href: "/data-quality", icon: Activity },
   { label: "Review centre", href: "/review", icon: ClipboardCheck },
