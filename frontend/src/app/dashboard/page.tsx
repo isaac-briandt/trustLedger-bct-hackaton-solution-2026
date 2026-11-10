@@ -81,7 +81,7 @@ export default function DashboardPage() {
         <MetricCard
           label="Out-of-range readings"
           value={data.temperature_quality.out_of_range_readings}
-          note="Outside the configured 2–6°C band"
+          note={`Outside the configured ${data.temperature_policy.minimum_c}–${data.temperature_policy.maximum_c}°C band`}
           icon={Thermometer}
           tone="blue"
         />
@@ -93,6 +93,39 @@ export default function DashboardPage() {
           tone="green"
         />
       </div>
+
+      {data.feature_evaluation.available && data.feature_evaluation.feature && data.feature_evaluation.baseline && (
+        <Card className="mt-6 border-0 shadow-sm ring-1 ring-border/80">
+          <CardHeader>
+            <CardTitle>Data feature vs simple baseline</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Retrospective unit-matching evaluation · {data.feature_evaluation.population_units?.toLocaleString()} units
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              {[
+                { label: "TrustLedger feature", name: data.feature_evaluation.feature_name, metrics: data.feature_evaluation.feature },
+                { label: "Simple baseline", name: data.feature_evaluation.baseline_name, metrics: data.feature_evaluation.baseline },
+              ].map(({ label, name, metrics }) => (
+                <div key={label} className="rounded-xl border bg-card p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+                  <p className="mt-1 text-sm font-medium">{name}</p>
+                  <p className="mt-4 text-2xl font-semibold tabular-nums">{metrics.candidate_units.toLocaleString()}</p>
+                  <p className="text-xs text-muted-foreground">unique candidate units</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <p>Precision <strong className="tabular-nums">{(metrics.precision * 100).toFixed(1)}%</strong></p>
+                    <p>Recall <strong className="tabular-nums">{(metrics.recall * 100).toFixed(1)}%</strong></p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 rounded-lg bg-muted/60 p-3 text-xs leading-5 text-muted-foreground">
+              {data.feature_evaluation.note} The feature returns fewer candidates and has higher measured precision on this dataset, with lower recall than the baseline. This is not a probability or a guarantee for another site.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.9fr)]">
         <Card className="border-0 shadow-sm ring-1 ring-border/80">

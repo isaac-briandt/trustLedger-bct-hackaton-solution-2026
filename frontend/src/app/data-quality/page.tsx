@@ -15,15 +15,21 @@ import { ErrorState, LoadingState } from "@/components/query-states";
 import { MetricCard } from "@/components/metric-card";
 import { PageHeading } from "@/components/page-heading";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchDataQuality } from "@/lib/api";
+import { fetchDataQuality, fetchSiteConfig } from "@/lib/api";
 
 export default function DataQualityPage() {
   const quality = useQuery({
     queryKey: ["data-quality"],
     queryFn: fetchDataQuality,
   });
+  const config = useQuery({
+    queryKey: ["site-config"],
+    queryFn: fetchSiteConfig,
+  });
   if (quality.isPending) return <LoadingState label="Loading data-quality metrics…" />;
   if (quality.isError) return <ErrorState message={quality.error.message} onRetry={() => void quality.refetch()} />;
+  if (config.isPending) return <LoadingState label="Loading configured temperature policy…" />;
+  if (config.isError) return <ErrorState message={config.error.message} onRetry={() => void config.refetch()} />;
 
   const data = quality.data;
   const chartData = [
@@ -70,11 +76,13 @@ export default function DataQualityPage() {
         <Card className="border-0 shadow-sm ring-1 ring-border/80">
           <CardHeader>
             <CardTitle>Validation summary</CardTitle>
-            <p className="text-sm text-muted-foreground">Configured cold-chain limits: 2–6°C</p>
+            <p className="text-sm text-muted-foreground">
+              Configured cold-chain limits: {config.data.temperature_policy.minimum_c}–{config.data.temperature_policy.maximum_c}°C
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            <QualityRow icon={Thermometer} label="Above 6°C" value={data.above_range_readings} />
-            <QualityRow icon={Thermometer} label="Below 2°C" value={data.below_range_readings} />
+            <QualityRow icon={Thermometer} label={`Above ${config.data.temperature_policy.maximum_c}°C`} value={data.above_range_readings} />
+            <QualityRow icon={Thermometer} label={`Below ${config.data.temperature_policy.minimum_c}°C`} value={data.below_range_readings} />
             <QualityRow icon={AlertTriangle} label="Conflicting duplicate timestamps" value={data.conflicting_duplicate_timestamps} />
             <QualityRow icon={Database} label="Duplicate rows" value={data.duplicate_rows} />
             <div className="rounded-lg bg-muted/70 p-3 text-xs leading-5 text-muted-foreground">

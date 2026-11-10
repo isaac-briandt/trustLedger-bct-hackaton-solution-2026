@@ -25,9 +25,10 @@ const PAGE_SIZE = 50;
 export default function InventoryPage() {
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
+  const [strategy, setStrategy] = useState<"sustained" | "baseline">("sustained");
   const inventory = useQuery({
-    queryKey: ["affected-inventory", search, offset],
-    queryFn: () => fetchAffectedUnits(PAGE_SIZE, offset, search),
+    queryKey: ["affected-inventory", strategy, search, offset],
+    queryFn: () => fetchAffectedUnits(PAGE_SIZE, offset, search, strategy),
   });
   const totalPages = inventory.data ? Math.max(1, Math.ceil(inventory.data.total / PAGE_SIZE)) : 1;
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
@@ -36,11 +37,16 @@ export default function InventoryPage() {
     <>
       <PageHeading
         eyebrow="Traceability"
-        title="Investigation candidates"
-        description="Search unit-level incident matches returned by the traceability pipeline."
+        title={strategy === "baseline" ? "Baseline fallback candidates" : "Investigation candidates"}
+        description={strategy === "baseline"
+          ? "Broader fallback view: any out-of-range reading is matched against unit location intervals."
+          : "Search unit-level matches for sustained incidents; switch to the baseline when the sustained-event rule is unavailable or uncertain."}
       />
       <div role="note" className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
-        <strong>These are investigation candidates only.</strong> An overlap does not establish product safety or authorize release, discard, quarantine removal or transfusion.
+        <strong>{strategy === "baseline" ? "Simple fallback: any out-of-range reading." : "These are investigation candidates only."}</strong>{" "}
+        {strategy === "baseline"
+          ? "This intentionally creates a broader list. A qualified person must review the original readings; this does not establish product safety or authorize a disposition."
+          : "An overlap does not establish product safety or authorize release, discard, quarantine removal or transfusion."}
       </div>
       <Card className="border-0 shadow-sm ring-1 ring-border/80">
         <CardContent className="p-0">
@@ -58,12 +64,32 @@ export default function InventoryPage() {
                 className="pl-9"
               />
             </div>
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              Detection view
+              <select
+                aria-label="Detection view"
+                className="h-9 rounded-lg border border-input bg-background px-2 text-sm text-foreground"
+                onChange={(event) => {
+                  setStrategy(event.target.value as "sustained" | "baseline");
+                  setOffset(0);
+                }}
+                value={strategy}
+              >
+                <option value="sustained">Sustained filter</option>
+                <option value="baseline">Single-reading fallback</option>
+              </select>
+            </label>
             {inventory.data && <p className="text-sm text-muted-foreground">{inventory.data.total.toLocaleString("en-GB")} matches</p>}
           </div>
           {inventory.isPending && <LoadingState label="Loading unit candidates…" />}
           {inventory.isError && <div className="p-5"><ErrorState message={inventory.error.message} onRetry={() => void inventory.refetch()} /></div>}
           {inventory.data && (
             <>
+              {strategy === "baseline" && (
+                <p className="border-b bg-muted/40 px-4 py-2 text-xs leading-5 text-muted-foreground sm:px-5">
+                  {inventory.data.notice} The baseline favors coverage and may substantially increase false positives.
+                </p>
+              )}
               {inventory.data.items.length ? (
                 <Table>
                   <TableHeader>

@@ -25,8 +25,12 @@ export interface FacilityMonitoring {
 }
 
 export interface DashboardData {
+  site_name: string;
+  country: string;
+  temperature_policy: TemperaturePolicy;
   dataset_note: string;
   temperature_quality: TemperatureQuality;
+  feature_evaluation: FeatureEvaluation;
   incident_count: number;
   sustained_incident_count: number;
   warning_episode_count: number;
@@ -37,6 +41,39 @@ export interface DashboardData {
   safety_note: string;
   incident_trends: IncidentTrend[];
   facility_monitoring: FacilityMonitoring[];
+}
+
+export interface TemperaturePolicy {
+  minimum_c: number;
+  maximum_c: number;
+}
+
+export interface SiteConfig {
+  site_name: string;
+  country: string;
+  temperature_policy: TemperaturePolicy;
+  identity_mode: "demo_self_reported" | string;
+}
+
+export interface EvaluationMetrics {
+  candidate_units: number;
+  true_positive: number;
+  false_positive: number;
+  false_negative: number;
+  true_negative: number;
+  precision: number;
+  recall: number;
+}
+
+export interface FeatureEvaluation {
+  available: boolean;
+  feature_name?: string;
+  baseline_name?: string;
+  population_units?: number;
+  labeled_exposed_units?: number;
+  feature?: EvaluationMetrics;
+  baseline?: EvaluationMetrics;
+  note: string;
 }
 
 export interface Incident {
@@ -84,6 +121,22 @@ export interface IncidentDetail {
   power_correlations: PowerCorrelation[];
   decision_required: boolean;
   notice: string;
+  temperature_policy: TemperaturePolicy;
+}
+
+export type ReviewRole = "facility_staff" | "blood_service_supervisor";
+export type ReviewDecision = "accept" | "change" | "reject";
+
+export interface ReviewEvent {
+  review_id: string;
+  incident_id: string;
+  actor_name: string;
+  role: ReviewRole;
+  decision: ReviewDecision;
+  reason: string;
+  changed_assessment: string | null;
+  created_at: string;
+  sync_status?: "pending_sync";
 }
 
 export interface ListResponse<T> {

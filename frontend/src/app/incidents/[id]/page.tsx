@@ -55,6 +55,7 @@ function IncidentDetailContent() {
     temperature_history: history,
     power_correlations: outages,
     notice,
+    temperature_policy: policy,
   } = detail.data;
   const chartData = history.map((point) => ({
     ...point,
@@ -109,8 +110,8 @@ function IncidentDetailContent() {
                   <XAxis dataKey="chart_time" tickLine={false} axisLine={false} minTickGap={30} tick={{ fontSize: 11, fill: "#64748b" }} />
                   <YAxis domain={["auto", "auto"]} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#64748b" }} unit="°C" />
                   <Tooltip labelFormatter={(label) => String(label)} formatter={(value) => [typeof value === "number" ? `${value.toFixed(1)}°C` : value, "Temperature"]} />
-                  <ReferenceLine y={2} stroke="#38a169" strokeDasharray="5 5" />
-                  <ReferenceLine y={6} stroke="#d97706" strokeDasharray="5 5" />
+                  <ReferenceLine y={policy.minimum_c} stroke="#38a169" strokeDasharray="5 5" />
+                  <ReferenceLine y={policy.maximum_c} stroke="#d97706" strokeDasharray="5 5" />
                   <Line type="monotone" dataKey="temp_c" name="Temperature" stroke="#2864b4" strokeWidth={2.5} dot={{ r: 2.5, fill: "#2864b4" }} activeDot={{ r: 5 }} connectNulls={false} />
                 </LineChart>
               </ResponsiveContainer>
