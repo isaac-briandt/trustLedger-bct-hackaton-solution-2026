@@ -30,6 +30,7 @@ The pipeline creates:
 - `unit_location_intervals.csv`
 - `temperature_gaps_by_facility.csv`
 - `incident_power_correlations.csv`
+- `transport_temperature_alerts.csv`
 
 The summary contains the retrospective feature-vs-baseline metrics. Evaluation labels are used only for aggregate metrics and are never returned in candidate records or used to construct operational matches.
 
@@ -55,6 +56,7 @@ Endpoints:
 - `GET /api/units/affected?strategy=baseline` (single-reading fallback)
 - `GET /api/units/affected/{incident_id}`
 - `GET /api/power-correlations`
+- `GET /api/transport-alerts?limit=50&offset=0&search=...`
 - `POST /api/reviews`
 - `GET /api/reviews`
 - `GET /api/audit-log`
@@ -64,6 +66,8 @@ The dashboard endpoint includes calculated monthly incident trends, per-facility
 Review events are stored in `data/processed/review_audit.sqlite3`. Database triggers reject event updates and deletions. The selected role/name are self-reported demo values, not verified identity. Review decisions apply to the investigation flag only.
 
 The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_MIN_C`, and `TRUSTLEDGER_TEMP_MAX_C` from its environment. Confirm thresholds with a blood-service expert and use the same settings when rerunning the pipeline.
+
+Transport alerts are a separate evidence stream from facility temperature incidents. The pipeline lists RBC/WB transfers whose recorded `coolbox_max_temp_c` exceeds the configured upper threshold. This field is a single maximum, not a continuous temperature history; it does not establish exposure duration or prove a unit is unsafe. The supplied temperature logger data has facility identifiers but no refrigerator or sensor identifier, so facility incidents cannot be attributed to an individual appliance.
 
 ## Safety and interpretation
 

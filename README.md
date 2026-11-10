@@ -19,7 +19,7 @@ No page releases, quarantines, discards or declares a unit safe or compatible. N
 ## Working prototype
 
 - **API:** FastAPI endpoints serve generated pipeline results and review/audit events.
-- **Dashboard:** Next.js responsive pages cover overview, incidents, incident details, inventory traceability, data quality, review and audit.
+- **Dashboard:** Next.js responsive pages cover overview, facility incidents, transport temperature alerts, incident details, inventory traceability, data quality, review and audit.
 - **Source data:** Synthetic hackathon CSVs in `data/raw/`; generated outputs in `data/processed/`.
 - **Live API values:** Dashboard counts and benchmark values come from the pipeline output; they are not hardcoded in the UI.
 
@@ -97,6 +97,8 @@ The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_
 - Hourly observations bound incident timing approximately; the dataset has no fridge/device identifier.
 - A candidate match is evidence for investigation, not proof of unsafe product. An unknown transfer receipt means unknown location.
 - Sensor glitches and missing-hour estimates are surfaced; estimated gaps are not observed records.
+- Transport cool-box maximum temperatures above the configured RBC/WB upper limit appear in a separate transport-alert view. A single maximum is not a continuous trace and does not prove exposure duration or product safety.
+- Facility temperature readings have no fridge or sensor identifier, so incidents are facility-level and cannot be attributed to a specific appliance.
 - The threshold and four-reading rule are prototype settings, not universal clinical policy.
 - Local review storage, self-reported roles, browser cache and outbox are single-device demo mechanisms. Production requires verified identity, authorization, a protected shared audit store, retention policy, encrypted transport/storage, and integration with authorized inventory/quarantine systems.
 - Weak-network fallback uses last-known cached data and queues review events; it does not support SMS and cannot synchronize until connectivity returns.

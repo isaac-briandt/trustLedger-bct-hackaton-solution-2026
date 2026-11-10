@@ -17,7 +17,7 @@ flowchart LR
     subgraph Prototype["TrustLedger prototype services"]
         CSV["Synthetic CSV data"]
         PIPE["Python validation +<br/>incident/unit matching"]
-        OUTPUT["Processed CSV / JSON"]
+        OUTPUT["Processed incidents · candidates · transport alerts"]
         API["FastAPI<br/>read API + review API"]
         AUDIT[("SQLite append-only<br/>review events")]
         CSV --> PIPE --> OUTPUT --> API --> UI
@@ -48,7 +48,8 @@ Solid arrows are implemented in the prototype. Dashed arrows are conceptual futu
 4. Confirmed unit holding intervals are reconstructed from available processing and transfer data. A dispatched unit with no confirmed receipt becomes location-unknown after dispatch.
 5. RBC/WB units overlapping sustained incidents are returned as investigation candidates. A second, broader single-reading baseline list is generated for fallback use. Evaluation-only exposure labels are used only to calculate aggregate comparison metrics; labels are omitted from both API candidate views.
 6. FastAPI exposes processed metrics and lists. Human review submissions are validated and appended to a local SQLite event table. Database triggers prevent row updates and deletes; a unique review ID makes retries idempotent.
-7. The browser caches successful GET responses and stores review actions locally if a network request fails. It shows a stale/offline/pending status and retries pending events when connectivity returns.
+7. RBC/WB transfers whose recorded cool-box maximum exceeds the configured upper limit are exported as a separate transport-temperature evidence list; these records are not joined to or described as facility sensor incidents.
+8. The browser caches successful GET responses and stores review actions locally if a network request fails. It shows a stale/offline/pending status and retries pending events when connectivity returns.
 
 ## Human review and authorization boundary
 
@@ -71,6 +72,7 @@ The UI offers `facility_staff` and `blood_service_supervisor` demo roles. The ac
 |---|---|---|
 | Facility | `facility_id` | Source dataset identifier; no device hierarchy supplied |
 | Temperature observation | `facility_id`, `recorded_at`, `temp_c`, quality status | Hourly; sentinels excluded from excursion logic |
+| Transport temperature evidence | transfer, unit, route, `coolbox_max_temp_c` | One maximum per transfer; not a continuous temperature history |
 | Incident | `incident_id`, facility, start/end, severity, rule | Approximate window; rule reason shown |
 | Unit candidate | unit, component, blood group, facility and overlap window | RBC/WB only; investigation candidate, not product disposition |
 | Review event | review ID, incident ID, actor/role, decision, reason, changed assessment, timestamp | Append-only table; demo identity only |
@@ -91,4 +93,4 @@ The table describes a future mapping, not standards conformance. A blood-service
 
 The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_MIN_C`, `TRUSTLEDGER_TEMP_MAX_C`, and `TRUSTLEDGER_CORS_ORIGINS`; `TRUSTLEDGER_AUDIT_DB_PATH` can select the local audit database location. The frontend reads `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_COUNTRY_LABEL`, and `NEXT_PUBLIC_API_BASE_URL`. Current processing uses a single RBC/WB temperature range; it is not a complete country policy engine. Threshold changes require blood-service validation, consistent environment settings, and reprocessing the dataset.
 
-The input has no fridge identifier, timestamps are hourly, some transfer receipts are missing, and all supplied data is synthetic. The benchmark is retrospective on labels from the same dataset, not a held-out test. Do not extrapolate its precision or recall to another facility, country or real clinical setting.
+The input has no fridge or sensor identifier, timestamps are hourly, some transfer receipts are missing, and all supplied data is synthetic. Transport alerts use only a recorded maximum for RBC/WB and do not establish temperature duration or product safety. The benchmark is retrospective on labels from the same dataset, not a held-out test. Do not extrapolate its precision or recall to another facility, country or real clinical setting.

@@ -18,6 +18,7 @@ Open `http://localhost:3000`. The app uses `NEXT_PUBLIC_API_BASE_URL` (default `
 
 - `/dashboard` — API-fed counts, facility monitoring, incident trends and retrospective feature-vs-baseline metrics.
 - `/incidents` and `/incidents/[id]` — searchable incident evidence, temperature timeline, outage context and candidate units.
+- `/transport-alerts` — RBC/WB transfers whose recorded cool-box maximum exceeds the configured upper threshold; shown separately from facility incidents.
 - `/inventory` — searchable, paginated investigation candidates with an explicit single-reading baseline fallback view.
 - `/data-quality` — sensor glitches, missing observations, duplicates and the configured range.
 - `/review` — human Accept / Change / Reject of an investigation flag; two self-reported demo roles, reason required.
