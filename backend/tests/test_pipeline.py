@@ -2,6 +2,7 @@ import pandas as pd
 from app.services.pipeline import (
     build_incidents,
     build_location_intervals,
+    evaluate_candidate_matching,
     parse_timestamp_series,
     validate_temperature,
 )
@@ -39,3 +40,45 @@ def test_missing_receipt_does_not_assume_destination_location():
     assert len(intervals) == 1
     assert intervals.iloc[0]["facility_id"] == "F1"
     assert intervals.iloc[0]["end_time"] == pd.Timestamp("2026-01-02")
+
+
+def test_sustained_event_evaluation_compares_against_single_reading_baseline():
+    incidents = pd.DataFrame([
+        {
+            "incident_id": "INC-1", "facility_id": "F1",
+            "start_time": pd.Timestamp("2026-01-01 01:00"),
+            "end_time": pd.Timestamp("2026-01-01 02:00"), "severity": "sustained",
+        },
+        {
+            "incident_id": "INC-2", "facility_id": "F1",
+            "start_time": pd.Timestamp("2026-01-01 03:00"),
+            "end_time": pd.Timestamp("2026-01-01 04:00"), "severity": "warning",
+        },
+    ])
+    intervals = pd.DataFrame([
+        {
+            "unit_id": "U1", "facility_id": "F1",
+            "start_time": pd.Timestamp("2026-01-01 00:00"),
+            "end_time": pd.Timestamp("2026-01-01 03:00"),
+        },
+        {
+            "unit_id": "U2", "facility_id": "F1",
+            "start_time": pd.Timestamp("2026-01-01 03:00"),
+            "end_time": pd.Timestamp("2026-01-01 05:00"),
+        },
+    ])
+    units = pd.DataFrame([
+        {"unit_id": "U1", "component": "RBC", "blood_group": "O+", "status": "in_stock", "temp_excursion_exposed": True},
+        {"unit_id": "U2", "component": "RBC", "blood_group": "A+", "status": "in_stock", "temp_excursion_exposed": False},
+        {"unit_id": "U3", "component": "RBC", "blood_group": "B+", "status": "in_stock", "temp_excursion_exposed": True},
+    ])
+
+    evaluation = evaluate_candidate_matching(incidents, intervals, units)
+
+    assert evaluation["feature"]["candidate_units"] == 1
+    assert evaluation["feature"]["precision"] == 1.0
+    assert evaluation["feature"]["recall"] == 0.5
+    assert evaluation["baseline"]["candidate_units"] == 2
+    assert evaluation["baseline"]["precision"] == 0.5
+    assert evaluation["baseline"]["recall"] == 0.5
+    assert "temp_excursion_exposed" not in str(evaluation)

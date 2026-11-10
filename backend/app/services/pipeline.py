@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import json
+import os
 
 import numpy as np
 import pandas as pd
@@ -16,8 +17,10 @@ REQUIRED_FILES = {
     "outages": "power_outages.csv",
 }
 SENTINEL_TEMPERATURES = {-99.0, 99.9, 0.0}
-SAFE_MIN_C = 2.0
-SAFE_MAX_C = 6.0
+SAFE_MIN_C = float(os.environ.get("TRUSTLEDGER_TEMP_MIN_C", "2.0"))
+SAFE_MAX_C = float(os.environ.get("TRUSTLEDGER_TEMP_MAX_C", "6.0"))
+if SAFE_MIN_C >= SAFE_MAX_C:
+    raise ValueError("TRUSTLEDGER_TEMP_MIN_C must be lower than TRUSTLEDGER_TEMP_MAX_C")
 
 
 def _read_csv(data_dir: Path, filename: str, date_columns: list[str] | None = None) -> pd.DataFrame:
@@ -296,6 +299,18 @@ def match_affected_units(incidents: pd.DataFrame, intervals: pd.DataFrame, units
     return result[cols].sort_values(["incident_id", "unit_id"]).reset_index(drop=True)
 
 
+def match_baseline_affected_units(
+    incidents: pd.DataFrame,
+    intervals: pd.DataFrame,
+    units: pd.DataFrame,
+) -> pd.DataFrame:
+    """Apply the simple baseline: match every out-of-range episode to inventory."""
+    baseline_incidents = incidents.copy()
+    if not baseline_incidents.empty:
+        baseline_incidents["severity"] = "sustained"
+    return match_affected_units(baseline_incidents, intervals, units)
+
+
 def correlate_power_outages(incidents: pd.DataFrame, outages: pd.DataFrame) -> pd.DataFrame:
     if incidents.empty or outages.empty:
         return pd.DataFrame(columns=["incident_id", "outage_id", "backup_power_engaged", "overlap_minutes"])
@@ -315,25 +330,102 @@ def correlate_power_outages(incidents: pd.DataFrame, outages: pd.DataFrame) -> p
     return pd.DataFrame(rows)
 
 
+def evaluate_candidate_matching(
+    incidents: pd.DataFrame,
+    intervals: pd.DataFrame,
+    units: pd.DataFrame,
+    baseline_rows: pd.DataFrame | None = None,
+) -> dict[str, Any]:
+    """Compare the sustained-event feature with a one-reading baseline.
+
+    Evaluation labels are read only for aggregate metrics and never included in
+    operational candidate records or the returned API response.
+    """
+    label_column = "temp_excursion_exposed"
+    if label_column not in units.columns or "unit_id" not in units.columns:
+        return {
+            "available": False,
+            "note": "The dataset does not include evaluation labels.",
+        }
+
+    evaluation_units = units
+    if "component" in units.columns:
+        evaluation_units = units[units["component"].isin(["RBC", "WB"])]
+    labeled_units = evaluation_units[["unit_id", label_column]].drop_duplicates("unit_id").copy()
+    actual = set(
+        labeled_units.loc[
+            labeled_units[label_column].astype(str).str.lower().isin({"true", "1", "yes"}),
+            "unit_id",
+        ]
+    )
+    population = set(labeled_units["unit_id"])
+
+    feature_rows = match_affected_units(incidents, intervals, units)
+    if baseline_rows is None:
+        baseline_rows = match_baseline_affected_units(incidents, intervals, units)
+
+    def metrics(rows: pd.DataFrame) -> dict[str, Any]:
+        predicted = set(rows["unit_id"]) & population if not rows.empty else set()
+        true_positive = len(predicted & actual)
+        false_positive = len(predicted - actual)
+        false_negative = len(actual - predicted)
+        true_negative = len(population - actual - predicted)
+        return {
+            "candidate_units": len(predicted),
+            "true_positive": true_positive,
+            "false_positive": false_positive,
+            "false_negative": false_negative,
+            "true_negative": true_negative,
+            "precision": round(true_positive / len(predicted), 4) if predicted else 0.0,
+            "recall": round(true_positive / len(actual), 4) if actual else 0.0,
+        }
+
+    return {
+        "available": True,
+        "feature_name": f"Four consecutive hourly readings above {SAFE_MAX_C:g}°C",
+        "baseline_name": "Any single out-of-range reading",
+        "population_units": len(population),
+        "labeled_exposed_units": len(actual),
+        "feature": metrics(feature_rows),
+        "baseline": metrics(baseline_rows),
+        "note": (
+            "Retrospective evaluation on the supplied synthetic dataset using its "
+            "evaluation-only exposure labels. This is not a held-out test and does "
+            "not establish performance on other sites or real-world data."
+        ),
+    }
+
+
 def run_pipeline(data_dir: str | Path, output_dir: str | Path) -> dict[str, Any]:
     inputs = load_inputs(data_dir)
     usable, quality = validate_temperature(inputs["temperature"])
     incidents = build_incidents(usable)
     intervals = build_location_intervals(inputs["units"], inputs["transfers"], inputs["donations"])
     affected = match_affected_units(incidents, intervals, inputs["units"])
+    baseline_affected = match_baseline_affected_units(incidents, intervals, inputs["units"])
+    feature_evaluation = evaluate_candidate_matching(
+        incidents, intervals, inputs["units"], baseline_rows=baseline_affected
+    )
     outage_matches = correlate_power_outages(incidents, inputs["outages"])
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     incidents.to_csv(out_dir / "incidents.csv", index=False)
     affected.to_csv(out_dir / "potentially_affected_units.csv", index=False)
+    baseline_affected.drop(
+        columns=["temp_excursion_exposed_label"], errors="ignore"
+    ).to_csv(out_dir / "baseline_candidate_units.csv", index=False)
     intervals.to_csv(out_dir / "unit_location_intervals.csv", index=False)
     quality["facility_gaps"].to_csv(out_dir / "temperature_gaps_by_facility.csv", index=False)
     outage_matches.to_csv(out_dir / "incident_power_correlations.csv", index=False)
 
     summary = {
+        "site_name": os.environ.get("TRUSTLEDGER_SITE_NAME", "TrustLedger"),
+        "country": os.environ.get("TRUSTLEDGER_COUNTRY", "Kenya"),
+        "temperature_policy": {"minimum_c": SAFE_MIN_C, "maximum_c": SAFE_MAX_C},
         "dataset_note": "Synthetic Terumo BCT Africa Hackathon starter dataset; not real facility or patient data.",
         "temperature_quality": quality["summary"],
+        "feature_evaluation": feature_evaluation,
         "incident_count": int(len(incidents)),
         "sustained_incident_count": int((incidents["severity"] == "sustained").sum()) if "severity" in incidents.columns else int(len(incidents)),
         "warning_episode_count": int((incidents["severity"] == "warning").sum()) if "severity" in incidents.columns else 0,
