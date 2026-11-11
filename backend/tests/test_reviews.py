@@ -1,5 +1,6 @@
 import sqlite3
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pandas as pd
@@ -26,6 +27,8 @@ def review_environment(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(main, "OUTPUT_DIR", output_dir)
     monkeypatch.setattr(main, "AUDIT_DB_PATH", output_dir / "review_audit.sqlite3")
+    monkeypatch.delenv("VERCEL", raising=False)
+    monkeypatch.delenv("TRUSTLEDGER_AUDIT_DATABASE_URL", raising=False)
     monkeypatch.setenv("TRUSTLEDGER_AUTH_SECRET", "test-secret-with-at-least-thirty-two-characters")
     monkeypatch.setenv("TRUSTLEDGER_DEMO_FACILITY_USERNAME", "facility-demo")
     monkeypatch.setenv("TRUSTLEDGER_DEMO_FACILITY_PASSWORD", "facility-password-long")
@@ -70,6 +73,76 @@ def test_review_ids_are_idempotent_and_cannot_be_reused_for_another_decision(rev
         main.create_review(conflicting, REVIEWER)
     assert error.value.status_code == 409
     assert main.review_audit_log(100, 0, REVIEWER)["total"] == 1
+
+
+def test_deployed_audit_storage_requires_a_database_url(monkeypatch):
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.delenv("TRUSTLEDGER_AUDIT_DATABASE_URL", raising=False)
+
+    with pytest.raises(HTTPException) as error:
+        main._require_deployed_audit_storage()
+
+    assert error.value.status_code == 503
+    assert "Persistent audit storage" in error.value.detail
+
+
+def test_postgres_review_storage_keeps_review_ids_idempotent(
+    review_environment, monkeypatch
+):
+    class Result:
+        def __init__(self, row):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+        def fetchall(self):
+            return self.row
+
+    class FakeConnection:
+        def __init__(self):
+            self.events = {}
+
+        def transaction(self):
+            return nullcontext()
+
+        def execute(self, query, parameters=None):
+            if query.lstrip().startswith("INSERT"):
+                review_id = parameters["review_id"]
+                if review_id in self.events:
+                    return Result(None)
+                self.events[review_id] = parameters.copy()
+                return Result(self.events[review_id])
+            if "COUNT(*)" in query:
+                return Result({"total": len(self.events)})
+            if "ORDER BY" in query:
+                return Result(list(self.events.values()))
+            return Result(self.events[parameters[0]])
+
+        def close(self):
+            pass
+
+    connection = FakeConnection()
+    monkeypatch.setenv("TRUSTLEDGER_AUDIT_DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(main, "_connect_postgres_audit_db", lambda: connection)
+    submission = main.ReviewSubmission(**review_payload())
+
+    first, created = main._record_review(submission, REVIEWER)
+    repeated, repeated_created = main._record_review(submission, REVIEWER)
+
+    assert created is True
+    assert repeated_created is False
+    assert repeated == first
+    audit = main.review_audit_log(100, 0, REVIEWER)
+    assert audit["total"] == 1
+    assert audit["items"][0]["review_id"] == str(submission.review_id)
+
+    conflicting = main.ReviewSubmission(
+        **review_payload(decision="reject", changed_assessment=None)
+    )
+    with pytest.raises(HTTPException) as error:
+        main._record_review(conflicting, REVIEWER)
+    assert error.value.status_code == 409
 
 
 def test_review_cannot_make_product_disposition_decisions():

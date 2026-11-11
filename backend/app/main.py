@@ -198,6 +198,37 @@ def _connect_audit_db() -> sqlite3.Connection:
     return connection
 
 
+def _audit_database_url() -> str:
+    return os.environ.get("TRUSTLEDGER_AUDIT_DATABASE_URL", "").strip()
+
+
+def _require_deployed_audit_storage() -> None:
+    if os.environ.get("VERCEL") and not _audit_database_url():
+        raise HTTPException(
+            status_code=503,
+            detail="Persistent audit storage is not configured on this deployment.",
+        )
+
+
+def _connect_postgres_audit_db():
+    database_url = _audit_database_url()
+    if not database_url:
+        raise RuntimeError("TRUSTLEDGER_AUDIT_DATABASE_URL is not configured.")
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+    except ImportError as error:
+        raise RuntimeError(
+            "PostgreSQL audit storage requires the psycopg package."
+        ) from error
+    return psycopg.connect(
+        database_url,
+        row_factory=dict_row,
+        connect_timeout=10,
+        prepare_threshold=None,
+    )
+
+
 def _review_dict(row: sqlite3.Row) -> dict:
     return {key: row[key] for key in row.keys()}
 
@@ -208,6 +239,48 @@ def _record_review(submission: ReviewSubmission, user: DemoUser) -> tuple[dict, 
     record["role"] = user.role
     record["created_at"] = datetime.now(timezone.utc).isoformat()
     record["auth_method"] = "preprovisioned_demo_account"
+    _require_deployed_audit_storage()
+    if _audit_database_url():
+        with closing(_connect_postgres_audit_db()) as connection:
+            with connection.transaction():
+                inserted = connection.execute(
+                    """
+                    INSERT INTO public.review_events
+                        (review_id, incident_id, actor_name, role, decision, reason,
+                         changed_assessment, created_at, auth_method)
+                    VALUES
+                        (%(review_id)s, %(incident_id)s, %(actor_name)s, %(role)s,
+                         %(decision)s, %(reason)s, %(changed_assessment)s,
+                         %(created_at)s, %(auth_method)s)
+                    ON CONFLICT (review_id) DO NOTHING
+                    RETURNING *
+                    """,
+                    record,
+                ).fetchone()
+                if inserted:
+                    return dict(inserted), True
+                existing = connection.execute(
+                    "SELECT * FROM public.review_events WHERE review_id = %s",
+                    (record["review_id"],),
+                ).fetchone()
+                if existing is None:
+                    raise RuntimeError("Review conflict occurred but no existing event was found.")
+                existing_record = dict(existing)
+                comparable = {
+                    key: existing_record[key]
+                    for key in record
+                    if key != "created_at"
+                }
+                if comparable != {
+                    key: value for key, value in record.items()
+                    if key != "created_at"
+                }:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="This review ID was already used for a different decision.",
+                    )
+                return existing_record, False
+
     with closing(_connect_audit_db()) as connection, connection:
         existing = connection.execute(
             "SELECT * FROM review_events WHERE review_id = ?",
@@ -447,6 +520,28 @@ def review_audit_log(
     offset: int = Query(default=0, ge=0),
     user: DemoUser = Depends(require_authenticated_user),
 ):
+    _require_deployed_audit_storage()
+    if _audit_database_url():
+        with closing(_connect_postgres_audit_db()) as connection:
+            total = connection.execute(
+                "SELECT COUNT(*) AS total FROM public.review_events"
+            ).fetchone()["total"]
+            rows = connection.execute(
+                """
+                SELECT * FROM public.review_events
+                ORDER BY created_at DESC, review_id DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
+            ).fetchall()
+        return {
+            "items": [dict(row) for row in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "notice": "New audit events use pre-provisioned demo accounts. Older self-reported events remain marked as legacy. This is prototype authentication, not production identity management.",
+        }
+
     with closing(_connect_audit_db()) as connection:
         total = connection.execute("SELECT COUNT(*) FROM review_events").fetchone()[0]
         rows = connection.execute(
