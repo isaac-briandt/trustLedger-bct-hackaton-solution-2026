@@ -21,8 +21,14 @@ export function OfflineStatus({ user }: { user: AuthenticatedUser }) {
     const sync = () => {
       void syncPendingReviews(user)
         .then(() => {
-          setState("online");
           updatePendingCount();
+          setState(
+            !navigator.onLine
+              ? "offline"
+              : getPendingReviews(user).length > 0
+                ? "stale"
+                : "online",
+          );
         })
         .catch(() => setState("sync-error"));
     };

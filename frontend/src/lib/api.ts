@@ -18,6 +18,7 @@ const API_BASE_URL = (
 const CACHE_PREFIX = "trustledger-api-cache:";
 const OUTBOX_KEY = "trustledger-review-outbox";
 const CONNECTION_EVENT = "trustledger:offline-state";
+let pendingReviewSync: Promise<number> | null = null;
 
 export interface ReviewSubmission {
   review_id: string;
@@ -36,6 +37,15 @@ export interface ReviewResponse {
   status: "recorded" | "already_recorded" | "queued_offline";
   review: ReviewEvent;
   notice: string;
+}
+
+function uniqueReviewEvents(events: ReviewEvent[]): ReviewEvent[] {
+  const seen = new Set<string>();
+  return events.filter((event) => {
+    if (seen.has(event.review_id)) return false;
+    seen.add(event.review_id);
+    return true;
+  });
 }
 
 function announceConnection(state: "online" | "offline" | "stale" | "sync-error" | "cache-error") {
@@ -204,7 +214,15 @@ export function getPendingReviews(user?: AuthenticatedUser): ReviewEvent[] {
   try {
     const serialized = window.localStorage.getItem(OUTBOX_KEY);
     if (!serialized) return [];
-    const events = JSON.parse(serialized) as ReviewEvent[];
+    const storedEvents = JSON.parse(serialized) as ReviewEvent[];
+    const events = uniqueReviewEvents(storedEvents);
+    if (events.length !== storedEvents.length) {
+      try {
+        window.localStorage.setItem(OUTBOX_KEY, JSON.stringify(events));
+      } catch {
+        announceConnection("cache-error");
+      }
+    }
     return user
       ? events.filter((event) => event.actor_name === user.actor_name && event.role === user.role)
       : events;
@@ -224,8 +242,9 @@ function savePendingReviews(events: ReviewEvent[]) {
     throw new Error("Offline review storage is available only in the browser.");
   }
   try {
-    if (events.length) {
-      window.localStorage.setItem(OUTBOX_KEY, JSON.stringify(events));
+    const uniqueEvents = uniqueReviewEvents(events);
+    if (uniqueEvents.length) {
+      window.localStorage.setItem(OUTBOX_KEY, JSON.stringify(uniqueEvents));
     } else {
       window.localStorage.removeItem(OUTBOX_KEY);
     }
@@ -273,17 +292,26 @@ export async function submitReview(
 }
 
 export async function syncPendingReviews(user: AuthenticatedUser): Promise<number> {
+  if (pendingReviewSync) return pendingReviewSync;
+  const sync = syncPendingReviewsOnce(user);
+  const trackedSync = sync.finally(() => {
+    if (pendingReviewSync === trackedSync) pendingReviewSync = null;
+  });
+  pendingReviewSync = trackedSync;
+  return trackedSync;
+}
+
+async function syncPendingReviewsOnce(user: AuthenticatedUser): Promise<number> {
   const pending = getPendingReviews();
   if (!pending.length || (typeof navigator !== "undefined" && !navigator.onLine)) {
     return 0;
   }
 
-  const remaining = [...pending];
+  const syncedReviewIds = new Set<string>();
   let synced = 0;
   for (let index = 0; index < pending.length; index += 1) {
     const event = pending[index];
     if (event.actor_name !== user.actor_name || event.role !== user.role) {
-      remaining.push(event);
       continue;
     }
     try {
@@ -295,9 +323,11 @@ export async function syncPendingReviews(user: AuthenticatedUser): Promise<numbe
         changed_assessment: event.changed_assessment,
       });
       synced += 1;
+      syncedReviewIds.add(event.review_id);
     } catch (error) {
-      remaining.push(...pending.slice(index));
-      savePendingReviews(remaining);
+      savePendingReviews(
+        getPendingReviews().filter((queued) => !syncedReviewIds.has(queued.review_id)),
+      );
       if (error instanceof TypeError) {
         announceConnection("offline");
         return synced;
@@ -306,7 +336,9 @@ export async function syncPendingReviews(user: AuthenticatedUser): Promise<numbe
       throw error;
     }
   }
-  savePendingReviews(remaining);
+  savePendingReviews(
+    getPendingReviews().filter((event) => !syncedReviewIds.has(event.review_id)),
+  );
   announceConnection("online");
   return synced;
 }
