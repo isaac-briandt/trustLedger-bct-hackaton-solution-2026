@@ -1,128 +1,129 @@
-# TrustLedger
+# [Team name]: TrustLedger cold-chain incident investigation support
 
-**Cold-chain incident detection and human investigation support for blood-bank teams.**
 Terumo BCT Africa Hackathon 2026 · Challenge area: Cold chain and data quality
 
-## Problem, user and workflow
+## The problem
 
-A facility cold-chain officer needs to identify temperature excursions, understand which blood units may have overlapped the event, and send the evidence to a qualified reviewer without treating a data flag as a clinical decision. A blood-service supervisor can review the incident evidence and record an Accept, Change or Reject decision for the **investigation flag**.
+A blood-bank cold-chain officer needs to notice when stored blood may have experienced an unsafe temperature, work out which units might have been at the affected facility, and bring the evidence to an authorized reviewer. In practice, clues can be spread across temperature logs, stock and transfer records, and power-outage reports. Missing readings, sensor glitches, and unconfirmed transfer receipts make the investigation harder.
 
-The supplied synthetic data models Kenyan facilities. The named user roles are prototype personas and must be checked with a blood-service expert before being presented as validated local workflow.
+TrustLedger demonstrates how those records can be brought together into an investigation workflow. Its supplied data describes 47 facilities over 1 November 2025 to 31 October 2026. In that synthetic dataset, we counted 399,280 hourly temperature rows, 55 known sentinel glitches, 12,440 estimated missing hourly readings, 4,607 readings above 6°C, and 1,933 out-of-range episodes. These are dataset counts, not claims about real facilities.
 
-1. The pipeline validates temperature records and groups continuous out-of-range readings.
-2. Four consecutive hourly readings above the configured upper limit are marked sustained. Confirmed unit-location intervals are overlapped with sustained events to create investigation candidates.
-3. Staff inspect temperature history, sensor-quality indicators, possible power-outage context and candidate units.
-4. A signed-in demo reviewer records an investigation review with a reason. The backend assigns the reviewer name and role from a pre-provisioned account and appends the event to the local audit log.
+The intended users are a facility cold-chain officer and a blood-service supervisor. These are prototype personas, not yet validated local job roles or approved operating procedures.
 
-No page releases, quarantines, discards or declares a unit safe or compatible. No real inventory or patient-care system is changed.
+## What we built
 
-## Working prototype
+- **What works now:** A responsive dashboard with Overview, Incidents, incident detail, Transport alerts, Inventory, Data quality, Review centre, and Audit log pages. The API serves results produced by the data pipeline. Demo accounts sign in through the API. A reviewer can Accept, Change, or Reject an **investigation flag**, provide a reason, and append a review event to the prototype audit log.
+- **What is mocked or not finished:** The records are synthetic, not live facility data. There is no live sensor feed or connection to a blood inventory, laboratory, quarantine, patient-care, or national reporting system. The app cannot make a release, quarantine, discard, compatibility, or transfusion decision. Its two demo roles currently have the same review permissions. Review events use local SQLite and are not backed by a durable shared production audit service. The workflow, roles, and threshold need blood-service expert validation.
 
-- **API:** FastAPI endpoints serve generated pipeline results and review/audit events.
-- **Dashboard:** Next.js responsive pages cover overview, facility incidents, transport temperature alerts, incident details, inventory traceability, data quality, review and audit.
-- **Source data:** Synthetic hackathon CSVs in `data/raw/`; generated outputs in `data/processed/`.
-- **Live API values:** Dashboard counts and benchmark values come from the pipeline output; they are not hardcoded in the UI.
+Demo video (3 minutes or less): **To be added by the team; no video is included yet.**
 
-### Data feature compared with baseline
+Live demo: [TrustLedger dashboard](https://trustledgersys.vercel.app/dashboard) · Test log-in: **Demo credentials will be provided privately to judges; do not publish passwords in this repository.**
 
-The data feature is a sustained-event filter: require four consecutive hourly readings above the configured upper temperature limit before matching units. The baseline matches units for any single out-of-range reading. Both are evaluated against the starter dataset's evaluation-only exposure labels, at unique RBC/WB unit level:
+## How to run it
 
-| Method | Candidate units | Precision | Recall | True positives | False positives | False negatives |
-|---|---:|---:|---:|---:|---:|---:|
-| Four consecutive readings (feature) | 6,396 | 94.5% | 90.4% | 6,042 | 354 | 641 |
-| Any out-of-range reading (baseline) | 23,017 | 28.2% | 97.1% | 6,492 | 16,525 | 191 |
+The repository includes the six synthetic CSV inputs used by the current pipeline under `backend/data/raw/`. Allow about 10 minutes if Python and Node.js are already installed.
 
-This retrospective evaluation uses the supplied synthetic labels; it is **not held out** and does not establish real-world or cross-country performance. The feature returns fewer candidates and has higher measured precision, with lower recall than the baseline. The interface shows this trade-off, sample size and limitation. It is a transparent data rule, not a trained AI model, probability or clinical recommendation.
+Requirements: Python 3.10 or later, Node.js 22 or later, and npm.
 
-## Human control, audit and fallback
-
-- Accept / Change / Reject records a human review of an **investigation flag**; a reason is required and Change also requires the revised assessment.
-- The backend uses SQLite with database triggers that reject event updates and deletions. A client-generated review ID makes offline retries idempotent.
-- The app has two pre-provisioned demo accounts. The backend verifies credentials, assigns each account a fixed role, and requires a signed HttpOnly session cookie for review and audit operations. This is prototype authentication only, not production identity management.
-- The browser caches successful API GET responses, caches visited app pages with a service worker, and queues review submissions locally when the API cannot be reached. Queued actions are visibly marked and sync when the API returns.
-- Inventory has a selectable single-reading baseline view for use when the sustained-event rule is unavailable or uncertain. The broader list is marked as a fallback and remains an investigation queue, not a disposition recommendation.
-- Cached readings can be stale; pending events remain on that browser until accepted by the API. If there is no cached copy, the app reports that data is unavailable. Do not treat a cached or baseline result as a disposition decision.
-
-## Architecture and data standards
-
-See [docs/architecture.md](docs/architecture.md) for the architecture/data-flow diagram, data model, wider-system position, offline behavior and a conceptual mapping to HL7 FHIR and ISBT 128. Those standards are mapping targets only; no standards-compliant adapter is implemented.
-
-## Run locally
-
-Requirements: Python 3.10+, Node.js 22+, npm.
-
-1. Place the organizer's synthetic CSVs in `data/raw/`.
-2. Create and activate a Python environment, then install dependencies:
+1. Create a Python environment and install the backend packages:
 
    ```bash
    python3 -m venv .venv
-   source .venv/bin/activate  # Windows: .venv\Scripts\activate
+   source .venv/bin/activate
    pip install -r backend/requirements.txt
    ```
 
-3. Configure the demo login before starting the API:
-
-   - Copy `.env.example` to `.env` and set a random `TRUSTLEDGER_AUTH_SECRET` (at least 32 characters), both demo usernames, display names, and unique passwords of at least 12 characters.
-   - Generate a secret with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. Never commit `.env` or use the sample accounts/passwords for deployment.
-   - Load the values into the API shell (`set -a; . ./.env; set +a` in POSIX shells), then keep that shell open when starting the API. In hosted environments, set these values in the provider's secret manager instead.
-
-4. Generate processed data:
+2. Set up local demo credentials. Copy `.env.example` to `.env`, then edit it and set a random `TRUSTLEDGER_AUTH_SECRET` of at least 32 characters, both demo usernames and display names, and unique passwords of at least 12 characters. Do not commit `.env` or use example credentials in a deployment.
 
    ```bash
-   cd backend
-   python -m app.run_pipeline --data ../data/raw --output ../data/processed
-   cd ..
+   cp .env.example .env
    ```
 
-5. Start the API in one terminal:
+   In the same terminal, load the settings and build the processed dataset:
 
    ```bash
-   source .venv/bin/activate
-   cd backend
    set -a
-   . ../.env
+   . ./.env
    set +a
-   uvicorn app.main:app --reload --port 8000
+   cd backend
+   ../.venv/bin/python -m app.run_pipeline --data data/raw --output data/processed
+   ../.venv/bin/uvicorn app.main:app --reload --port 8000
    ```
 
-6. In another terminal, copy `frontend/.env.example` to `frontend/.env.local`, install and start:
+   Keep this terminal running. The pipeline should print `TrustLedger pipeline complete`.
+
+3. In a second terminal, set up and start the frontend:
 
    ```bash
+   cp frontend/.env.example frontend/.env.local
    npm --prefix frontend install
    npm --prefix frontend run dev
    ```
 
-7. Open [http://localhost:3000](http://localhost:3000) and sign in with one of the configured accounts. API documentation is at [http://localhost:8000/docs](http://localhost:8000/docs).
+4. Open [http://localhost:3000](http://localhost:3000) and sign in with one of the demo accounts you configured. The API health check is [http://localhost:8000/health](http://localhost:8000/health); interactive API documentation is at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-Run backend checks from the repository root with `.venv/bin/pytest -q`. Run frontend checks with `npm --prefix frontend run lint`, `npm --prefix frontend run typecheck` and `npm --prefix frontend run build`.
+For code checks, run `.venv/bin/pytest -q backend/tests` and `npm --prefix frontend run lint`, `npm --prefix frontend run typecheck`, and `npm --prefix frontend run build`.
 
-## Configuration for another site
+## Architecture
 
-The API reads site, threshold, CORS, demo-account, session-secret and cookie settings from its environment. For deployment across different frontend/backend sites, set `TRUSTLEDGER_COOKIE_SECURE=true` and `TRUSTLEDGER_COOKIE_SAMESITE=none`; keep the CORS allowlist restricted to the exact frontend origin. The frontend reads `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_COUNTRY_LABEL` and `NEXT_PUBLIC_API_BASE_URL`; examples are in `.env.example` and `frontend/.env.example`. `TRUSTLEDGER_AUDIT_DB_PATH` optionally selects the local audit database path. Set policy values only after the relevant blood-service authority confirms them, then rerun the pipeline with the same settings. The current workflow supports one RBC/WB temperature range and English labels; component-specific rules, translation, and country-specific legal workflows need further implementation and expert review.
+[Open the two-layer architecture diagrams](.github/modernize/assessment/engines/facts/architecture-diagram.md) or the [architecture and data-flow notes](docs/architecture.md).
 
-## Safety and limitations
+The implemented flow is: synthetic CSV files → Python validation and matching pipeline → processed CSV/JSON files → authenticated FastAPI endpoints → Next.js dashboard. Human review events are appended to a local SQLite database. The browser can cache previously loaded information and queue review submissions until connectivity returns.
 
-- Data is synthetic and for demonstration only. Do not use it to make real facility or patient-care decisions.
-- Hourly observations bound incident timing approximately; the dataset has no fridge/device identifier.
-- A candidate match is evidence for investigation, not proof of unsafe product. An unknown transfer receipt means unknown location.
-- Sensor glitches and missing-hour estimates are surfaced; estimated gaps are not observed records.
-- Transport cool-box maximum temperatures above the configured RBC/WB upper limit appear in a separate transport-alert view. A single maximum is not a continuous trace and does not prove exposure duration or product safety.
-- Facility temperature readings have no fridge or sensor identifier, so incidents are facility-level and cannot be attributed to a specific appliance.
-- The threshold and four-reading rule are prototype settings, not universal clinical policy.
-- The demo login uses environment-provisioned credentials and signed cookies; it has no managed identity, MFA, account recovery/lifecycle, or production-grade abuse controls. Local review storage, browser cache and outbox are single-device demo mechanisms. Production requires a managed identity provider, blood-service-approved authorization, a protected shared audit store, retention policy, encrypted transport/storage, and integration with authorized inventory/quarantine systems.
-- Weak-network fallback uses last-known cached data and queues review events; it does not support SMS and cannot synchronize until connectivity returns.
+In a wider blood system, facility sensors, blood inventory, laboratory, transport, and power systems could provide authorized data to this workflow. **Those integrations are not implemented.** TrustLedger currently does not write decisions back to those systems. The project discusses possible mappings to HL7 FHIR and ISBT 128, but has no standards-compliant adapter. DHIS2 is not used or integrated.
 
-## Demo readiness
+## AI and data
 
-[docs/demo-script.md](docs/demo-script.md) contains a timed walkthrough under three minutes and the checklist for recording. A real team-recorded demo video still needs to be produced and attached to the submission; no recording is claimed in this repository.
+- **What the AI or data feature does:** The current feature is a transparent data rule, not a trained AI model. The pipeline repairs a known malformed timestamp pattern, checks missing or duplicate values and sensor sentinels, groups consecutive out-of-range temperature readings into episodes, reconstructs confirmed unit-location intervals from transfer records, and finds RBC/whole-blood units whose known location overlaps sustained incidents. It also checks for overlapping outage records and creates separate transport alerts from recorded cool-box maximum temperatures.
+- **Baseline we compared against:** Match inventory against any out-of-range reading. This intentionally broader single-reading baseline is available as a fallback in the Inventory page.
+- **Result:** On the synthetic dataset provided, for 1 November 2025 to 31 October 2026, the baseline produced 23,017 candidate RBC/whole-blood units, with 28.2% precision and 97.1% recall. TrustLedger's sustained feature requires four consecutive hourly readings above the configured 6°C upper limit; it produced 6,396 candidates, with 94.5% precision and 90.4% recall. These are retrospective results against evaluation labels in the same dataset, not a held-out test. The supplied exposure label can include cool-box as well as fridge exposure, so it is not direct ground truth for fridge-only matching. Results do not establish performance on real facilities or another country.
+- **How a user sees the reason for a recommendation:** The system does not generate an AI recommendation. A user can inspect the incident's facility, approximate time window, readings and rule, nearby temperature history, overlapping power records, and candidate-unit overlap window. Data Quality shows sensor glitches, duplicates, out-of-range readings, and estimated missing hours. A transport alert shows the recorded transfer maximum, but not a continuous temperature history.
+- **Who approves it (Accept / Change / Reject):** A signed-in human reviewer records a decision about the **investigation flag** and supplies a reason; Change also requires a revised assessment. The server assigns the demo actor and role from the signed-in account. Both demo roles currently have the same permissions, pending role-policy confirmation. This review does not decide the blood unit's disposition.
+- **What happens if the AI is wrong or offline:** A reviewer can Change or Reject an investigation flag and record why. Staff can compare with the broader single-reading baseline. If the API is offline, previously cached data may be shown with a stale warning and a review may be queued in that browser under the same demo account. It is marked Pending sync until the API accepts it. The browser cannot provide fresh data while disconnected; a queued review is not yet a server audit record.
 
-## Evidence
+## Data
 
-- Backend unit/API tests: `backend/tests/`
-- Data audit and calculation definitions: [docs/data-audit.md](docs/data-audit.md)
-- Architecture diagram and mapping: [docs/architecture.md](docs/architecture.md)
-- Demo recording plan: [docs/demo-script.md](docs/demo-script.md)
+Source: the Terumo BCT Africa Hackathon 2026 synthetic starter dataset supplied to the team. The current pipeline uses six CSV files:
 
-## AI tools
+| Input file             |    Rows |
+| ---------------------- | ------: |
+| `facilities.csv`       |      47 |
+| `temperature_logs.csv` | 399,280 |
+| `units.csv`            |  49,426 |
+| `transfers.csv`        |  35,181 |
+| `power_outages.csv`    |   2,609 |
+| `donations.csv`        |  47,363 |
 
-AI tools assisted with code drafting and analysis. Team members must review the implementation, understand the benchmark and limitations, and be able to explain the workflow and safety boundaries to judges.
+Other tables in the starter dataset, including routes, donors, drives, requests, and daily stock, are not used by the current processing workflow. The evaluation-only unit exposure label is used for aggregate benchmark metrics only; it is not used to detect incidents or construct candidate matches and is not returned in candidate API responses.
+
+All supplied records are synthetic. No real donor, patient, staff, or facility records are used. The team has not verified a separate redistribution license for the organizer-provided dataset; confirm its terms with the organizers before redistributing it outside the hackathon.
+
+## African conditions
+
+- **Connectivity:** The browser can use cached app assets and previously loaded data, and can queue review submissions locally for later sync. Cached data may be stale. This is a single-browser fallback, not shared offline synchronization; the app has no SMS workflow.
+- **Power:** The software does not provide power backup, low-power sensors, or power-failure communications. It can show correlated outage records present in the dataset, but that is not proof that an outage caused an excursion.
+- **Phones and devices:** The dashboard uses a responsive web layout and can be opened in a mobile browser. It has not been validated on a representative set of low-cost phones, browsers, or connectivity conditions.
+- **Language and local procedures:** The current interface is English-only. Temperature policy, terminology, roles, and escalation procedures need confirmation with the relevant blood service; the current 2–6°C rule is a prototype setting for RBC/whole blood, not a universal policy.
+- **Setting up another site or country:** Site name, country label, API URL, and temperature bounds are configurable. A new deployment still needs its own authorized dataset, expert-approved rules, secure identity setup, and testing. FHIR, ISBT 128, and DHIS2 integration are not implemented.
+
+## AI tools we used
+
+GitHub Copilot was used to assist with code drafting, debugging, and documentation. The team is responsible for reviewing the code, validating the data interpretation, and explaining the prototype's limitations.
+
+## Team
+
+| Name              | Role       | Country       | Presenting Friday (in person / online) |
+| ----------------- | ---------- | ------------- | -------------------------------------- |
+| [Add team member] | [Add role] | [Add country] | [Add in person or online]              |
+| [Add team member] | [Add role] | [Add country] | [Add in person or online]              |
+
+## Known limits and next steps
+
+- Confirm the user roles, review permissions, thresholds, and operating workflow with blood-service experts.
+- Validate the rule against an independent dataset and real-world conditions before considering operational use.
+- Integrate authorized sensor, inventory, transport, and laboratory data using agreed identifiers and data standards.
+- Replace local SQLite audit storage and demo authentication with a durable, protected shared service and managed identity.
+- Validate timestamps, missing-data handling, device identification, mobile behavior, and offline sync at a pilot site.
+- Add approved languages and country-specific policies only after local review.
+
+This prototype supports investigation only. It must not be used to release, quarantine, discard, declare compatible, or transfuse any blood product.
