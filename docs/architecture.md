@@ -19,7 +19,7 @@ flowchart LR
         PIPE["Python validation +<br/>incident/unit matching"]
         OUTPUT["Processed incidents · candidates · transport alerts"]
         API["FastAPI<br/>read API + review API"]
-        AUDIT[("SQLite append-only<br/>review events")]
+        AUDIT[("SQLite locally or<br/>Supabase PostgreSQL")]
         CSV --> PIPE --> OUTPUT --> API --> UI
         UI -->|"Accept / Change / Reject<br/>investigation flag only"| API
         API --> AUDIT
@@ -55,7 +55,7 @@ Solid arrows are implemented in the prototype. Dashed arrows are conceptual futu
 
 Accept, Change and Reject apply to the **investigation flag**, not the blood unit's clinical or operational disposition. A reason is mandatory; Change also requires a revised assessment. Neither API nor UI can release, clear, discard, declare compatible, or order transfusion of a unit.
 
-The prototype has two environment-provisioned demo accounts. The API verifies usernames/passwords, issues an eight-hour signed HttpOnly cookie, assigns the role and actor name server-side, and requires the session for API data, review creation and audit-log reads. Review payloads cannot choose an actor or role. Both roles currently have the same review permissions because the organizer role matrix has not yet been confirmed. This is not a managed identity system: there is no MFA, account recovery/lifecycle or production-grade abuse protection. Production requires identity federation, blood-service-approved server-side permissions, protected storage, audit retention and authorized integration. Local SQLite triggers are append-only at the application database layer, not tamper-proof against an administrator with file access.
+The prototype has two environment-provisioned demo accounts. The API verifies usernames/passwords, issues an eight-hour signed HttpOnly cookie, assigns the role and actor name server-side, and requires the session for API data, review creation and audit-log reads. Review payloads cannot choose an actor or role. Both roles currently have the same review permissions because the organizer role matrix has not yet been confirmed. Local development uses SQLite; setting `TRUSTLEDGER_AUDIT_DATABASE_URL` switches review storage to Supabase PostgreSQL. Both storage schemas reject event updates and deletions at the database layer, but this is not tamper-proof against a database owner or administrator. This is not a managed identity system: there is no MFA, account recovery/lifecycle or production-grade abuse protection. Production requires identity federation, blood-service-approved server-side permissions, protected storage, audit retention and authorized integration.
 
 ## Offline and low-connectivity behavior
 
@@ -75,7 +75,7 @@ The prototype has two environment-provisioned demo accounts. The API verifies us
 | Transport temperature evidence | transfer, unit, route, `coolbox_max_temp_c` | One maximum per transfer; not a continuous temperature history |
 | Incident | `incident_id`, facility, start/end, severity, rule | Approximate window; rule reason shown |
 | Unit candidate | unit, component, blood group, facility and overlap window | RBC/WB only; investigation candidate, not product disposition |
-| Review event | review ID, incident ID, actor/role, decision, reason, changed assessment, timestamp | Append-only table; demo identity only |
+| Review event | review ID, incident ID, actor/role, decision, reason, changed assessment, timestamp | Append-only SQLite locally or Supabase PostgreSQL; demo identity only |
 
 ## Standards mapping (conceptual)
 
@@ -85,12 +85,12 @@ The prototype has two environment-provisioned demo accounts. The API verifies us
 | Temperature reading | FHIR `Observation` with effective time, quantity and device reference | CSV row; device ID is not available |
 | Temperature incident | FHIR `DetectedIssue` or workflow `Task` | Local incident record |
 | Unit inventory and transfer | FHIR `InventoryItem` / `SupplyDelivery`; ISBT 128 Donation Identification Number and Product Code crosswalk | Synthetic unit ID and transfer rows; not ISBT 128 |
-| Human review and provenance | FHIR `Provenance` / `AuditEvent` | Local SQLite event fields; no FHIR adapter |
+| Human review and provenance | FHIR `Provenance` / `AuditEvent` | Local SQLite or Supabase PostgreSQL event fields; no FHIR adapter |
 
 The table describes a future mapping, not standards conformance. A blood-service integration partner must confirm profiles, terminology, identifiers and workflow before implementation.
 
 ## Configuration and known limits
 
-The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_MIN_C`, `TRUSTLEDGER_TEMP_MAX_C`, and `TRUSTLEDGER_CORS_ORIGINS`; `TRUSTLEDGER_AUDIT_DB_PATH` can select the local audit database location. The frontend reads `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_COUNTRY_LABEL`, and `NEXT_PUBLIC_API_BASE_URL`. Current processing uses a single RBC/WB temperature range; it is not a complete country policy engine. Threshold changes require blood-service validation, consistent environment settings, and reprocessing the dataset.
+The API reads `TRUSTLEDGER_SITE_NAME`, `TRUSTLEDGER_COUNTRY`, `TRUSTLEDGER_TEMP_MIN_C`, `TRUSTLEDGER_TEMP_MAX_C`, and `TRUSTLEDGER_CORS_ORIGINS`; `TRUSTLEDGER_AUDIT_DB_PATH` can select the local SQLite audit database location, while `TRUSTLEDGER_AUDIT_DATABASE_URL` selects Supabase PostgreSQL. The frontend reads `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_COUNTRY_LABEL`, and `NEXT_PUBLIC_API_BASE_URL`. Current processing uses a single RBC/WB temperature range; it is not a complete country policy engine. Threshold changes require blood-service validation, consistent environment settings, and reprocessing the dataset.
 
 The input has no fridge or sensor identifier, timestamps are hourly, some transfer receipts are missing, and all supplied data is synthetic. Transport alerts use only a recorded maximum for RBC/WB and do not establish temperature duration or product safety. The benchmark is retrospective on labels from the same dataset, not a held-out test. Do not extrapolate its precision or recall to another facility, country or real clinical setting.

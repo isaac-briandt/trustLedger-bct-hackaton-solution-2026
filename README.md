@@ -68,7 +68,7 @@ For code checks, run `.venv/bin/pytest -q backend/tests` and `npm --prefix front
 
 [Open the two-layer architecture diagrams](.github/modernize/assessment/engines/facts/architecture-diagram.md) or the [architecture and data-flow notes](docs/architecture.md).
 
-The implemented flow is: synthetic CSV files → Python validation and matching pipeline → processed CSV/JSON files → authenticated FastAPI endpoints → Next.js dashboard. Human review events are appended to a local SQLite database. The browser can cache previously loaded information and queue review submissions until connectivity returns.
+The implemented flow is: synthetic CSV files → Python validation and matching pipeline → processed CSV/JSON files → authenticated FastAPI endpoints → Next.js dashboard. Human review events use local SQLite for development and can use Supabase PostgreSQL in deployment. The browser can cache previously loaded information and queue review submissions until connectivity returns.
 
 In a wider blood system, facility sensors, blood inventory, laboratory, transport, and power systems could provide authorized data to this workflow. **Those integrations are not implemented.** TrustLedger currently does not write decisions back to those systems. The project discusses possible mappings to HL7 FHIR and ISBT 128, but has no standards-compliant adapter. DHIS2 is not used or integrated.
 

@@ -44,6 +44,12 @@ uvicorn app.main:app --reload --port 8000
 
 Open `http://localhost:8000/docs` for the API explorer.
 
+## Audit storage
+
+Local development uses SQLite at `data/processed/review_audit.sqlite3`. To use Supabase PostgreSQL, run [`sql/supabase_audit_schema.sql`](sql/supabase_audit_schema.sql) in the Supabase SQL Editor, then set `TRUSTLEDGER_AUDIT_DATABASE_URL` in the backend environment to Supabase's server-side connection-pooler URL in transaction mode with SSL enabled. Keep it in server-side environment settings only; never use a `NEXT_PUBLIC_` variable or commit the secret. When this variable is set, the API stores reviews in PostgreSQL instead of SQLite.
+
+For Vercel, configure `TRUSTLEDGER_AUDIT_DATABASE_URL` in the backend project's encrypted Environment Variables and redeploy. Do not paste the connection string into chat or source control. Existing browser-queued reviews remain pending until the API accepts them; the API uses `review_id` to make retries idempotent.
+
 Endpoints:
 
 - `GET /health`
