@@ -97,9 +97,11 @@ export default function AuditLogPage() {
                     <p className="mt-3 text-xs text-muted-foreground">
                       {event.actor_name} · {event.role === "facility_staff" ? "Facility staff" : "Blood service supervisor"}
                       {" · "}
-                      {event.auth_method === "preprovisioned_demo_account"
-                        ? "Pre-provisioned demo account"
-                        : "Legacy self-reported identity"}
+                      {event.sync_status === "pending_sync"
+                        ? "Signed-in demo account · pending sync"
+                        : event.auth_method === "preprovisioned_demo_account"
+                          ? "Pre-provisioned demo account"
+                          : "Legacy self-reported identity"}
                     </p>
                   </div>
                   <time className="text-xs text-muted-foreground" dateTime={event.created_at}>
