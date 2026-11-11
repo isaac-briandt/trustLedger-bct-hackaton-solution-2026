@@ -199,7 +199,10 @@ def _connect_audit_db() -> sqlite3.Connection:
 
 
 def _audit_database_url() -> str:
-    return os.environ.get("TRUSTLEDGER_AUDIT_DATABASE_URL", "").strip()
+    return (
+        os.environ.get("TRUSTLEDGER_AUDIT_DATABASE_URL", "").strip()
+        or os.environ.get("TRUSTLEDGER_AUDIT_DATABASE_URL_POOLED", "").strip()
+    )
 
 
 def _require_deployed_audit_storage() -> None:

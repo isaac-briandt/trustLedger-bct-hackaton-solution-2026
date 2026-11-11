@@ -86,6 +86,13 @@ def test_deployed_audit_storage_requires_a_database_url(monkeypatch):
     assert "Persistent audit storage" in error.value.detail
 
 
+def test_pooled_audit_database_url_is_supported(review_environment, monkeypatch):
+    monkeypatch.delenv("TRUSTLEDGER_AUDIT_DATABASE_URL", raising=False)
+    monkeypatch.setenv("TRUSTLEDGER_AUDIT_DATABASE_URL_POOLED", "postgresql://pooled")
+
+    assert main._audit_database_url() == "postgresql://pooled"
+
+
 def test_postgres_review_storage_keeps_review_ids_idempotent(
     review_environment, monkeypatch
 ):
